@@ -6,6 +6,12 @@ resource "random_id" "suffix" {
 }
 
 locals {
+  # Roles created by terraform/bootstrap. Names are fixed there.
+  ci_role_arns = [
+    "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/qwen-spot-github-actions",
+    "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/qwen-spot-github-plan",
+  ]
+
   account_id = data.aws_caller_identity.current.account_id
   partition  = data.aws_partition.current.partition
   # Created by terraform/bootstrap; the CI role refuses to create roles without it.
@@ -64,6 +70,7 @@ module "storage" {
   results_bucket         = local.results_bucket
   kms_key_arn            = aws_kms_key.main.arn
   results_retention_days = var.results_retention_days
+  listing_principal_arns = local.ci_role_arns
   # Deny data-plane access to everyone else. Clients are listed on weights too so
   # the operator can inspect weights; their IAM policy still grants nothing there.
   weights_allowed_principal_arns = concat([module.iam.instance_role_arn], module.iam.uploader_role_arns, [module.iam.client_role_arn], var.admin_principal_arns)

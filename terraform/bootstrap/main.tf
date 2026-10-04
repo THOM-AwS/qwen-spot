@@ -418,10 +418,12 @@ data "aws_iam_policy_document" "iam_scoped" {
   # ---- explicit denies: CI can never widen its own reach -------------------
 
   statement {
-    sid         = "DenyTouchingOwnRole"
+    sid         = "DenyTouchingCiRoles"
     effect      = "Deny"
     not_actions = ["iam:Get*", "iam:List*"]
-    resources   = [local.ci_role_arn]
+    # Its own role, and the plan role: every branch push can use the plan role
+    # without approval, so CI must never be able to widen it.
+    resources = [local.ci_role_arn, "${local.iam_arn}:role/qwen-spot-github-plan"]
   }
 
   statement {
@@ -745,6 +747,191 @@ resource "aws_iam_role_policy" "services" {
   name   = "qwen-spot-services"
   role   = aws_iam_role.github_actions.id
   policy = data.aws_iam_policy_document.services.json
+}
+
+# ---- plan role (read-only) ----------------------------------------------------
+# Plan runs on every push to any branch with no approval, so it gets its own role
+# that can only read: project resource configuration and the state file. It
+# plans with -lock=false and never writes state. It cannot read bucket objects
+# (the bucket policies deny that) and cannot change anything.
+
+data "aws_iam_policy_document" "plan_trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    # Branch pushes only. Jobs in an environment (apply) and pull requests from
+    # forks get a different subject and cannot use this role.
+    condition {
+      test     = "StringLike"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["${var.github_sub_prefix}:ref:refs/heads/*"]
+    }
+  }
+}
+
+resource "aws_iam_role" "github_plan" {
+  name                 = "qwen-spot-github-plan"
+  description          = "Read-only terraform plan for ${var.github_repo}"
+  assume_role_policy   = data.aws_iam_policy_document.plan_trust.json
+  max_session_duration = 3600
+}
+
+data "aws_iam_policy_document" "plan_read" {
+  statement {
+    sid       = "StateRead"
+    actions   = ["s3:GetObject"]
+    resources = ["arn:${local.p}:s3:::${var.state_bucket}/qwen-spot/main.tfstate"]
+  }
+
+  statement {
+    sid       = "StateList"
+    actions   = ["s3:ListBucket"]
+    resources = ["arn:${local.p}:s3:::${var.state_bucket}"]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["qwen-spot/*"]
+    }
+  }
+
+  statement {
+    sid       = "Ec2AndAutoScalingDescribe"
+    actions   = ["ec2:Describe*", "autoscaling:Describe*"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.region]
+    }
+  }
+
+  statement {
+    sid = "ProjectIamRead"
+    actions = [
+      "iam:GetRole",
+      "iam:GetRolePolicy",
+      "iam:ListRolePolicies",
+      "iam:ListAttachedRolePolicies",
+      "iam:ListInstanceProfilesForRole",
+      "iam:ListRoleTags",
+      "iam:GetPolicy",
+      "iam:GetPolicyVersion",
+      "iam:ListPolicyVersions",
+      "iam:ListPolicyTags",
+      "iam:GetInstanceProfile",
+    ]
+    resources = [
+      "${local.iam_arn}:role/qwen-spot-*",
+      "${local.iam_arn}:policy/qwen-spot-*",
+      "${local.iam_arn}:instance-profile/qwen-spot-*",
+    ]
+  }
+
+  # Bucket configuration only. s3:ListBucket is HeadBucket; objects stay denied.
+  statement {
+    sid = "ProjectBucketConfig"
+    actions = [
+      "s3:ListBucket",
+      "s3:GetBucket*",
+      "s3:GetAccelerateConfiguration",
+      "s3:GetLifecycleConfiguration",
+      "s3:GetReplicationConfiguration",
+      "s3:GetEncryptionConfiguration",
+    ]
+    resources = ["arn:${local.p}:s3:::qwen-spot-*"]
+  }
+
+  statement {
+    sid       = "ProjectQueues"
+    actions   = ["sqs:GetQueueAttributes", "sqs:GetQueueUrl", "sqs:ListQueueTags"]
+    resources = ["arn:${local.p}:sqs:*:${local.account_id}:qwen-spot-*"]
+  }
+
+  statement {
+    sid       = "ProjectTopics"
+    actions   = ["sns:GetTopicAttributes", "sns:ListTagsForResource", "sns:ListSubscriptionsByTopic"]
+    resources = ["arn:${local.p}:sns:*:${local.account_id}:qwen-spot-*"]
+  }
+
+  statement {
+    sid       = "ProjectKeys"
+    actions   = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
+    resources = ["arn:${local.p}:kms:*:${local.account_id}:key/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = ["qwen-spot"]
+    }
+  }
+
+  statement {
+    sid       = "ProjectLogs"
+    actions   = ["logs:ListTagsForResource", "logs:ListTagsLogGroup"]
+    resources = ["arn:${local.p}:logs:*:${local.account_id}:log-group:/qwen-spot/*"]
+  }
+
+  statement {
+    sid       = "ProjectAlarms"
+    actions   = ["cloudwatch:ListTagsForResource"]
+    resources = ["arn:${local.p}:cloudwatch:*:${local.account_id}:alarm:qwen-spot-*"]
+  }
+
+  statement {
+    sid       = "ProjectBudget"
+    actions   = ["budgets:ViewBudget", "budgets:ListTagsForResource"]
+    resources = ["arn:${local.p}:budgets::${local.account_id}:budget/qwen-spot-*"]
+  }
+
+  statement {
+    sid       = "PublicParameters"
+    actions   = ["ssm:GetParameter", "ssm:GetParameters"]
+    resources = ["arn:${local.p}:ssm:*::parameter/aws/service/*"]
+  }
+
+  statement {
+    sid = "AccountWideReads"
+    actions = [
+      "sts:GetCallerIdentity",
+      "kms:ListAliases",
+      "logs:DescribeLogGroups",
+      "cloudwatch:DescribeAlarms",
+      "sns:GetSubscriptionAttributes",
+      "iam:GetOpenIDConnectProvider",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "NeverAssumeOrDecrypt"
+    effect    = "Deny"
+    actions   = ["sts:AssumeRole", "kms:Decrypt", "s3:GetObject*", "s3:PutObject*", "s3:DeleteObject*"]
+    resources = ["arn:${local.p}:s3:::qwen-spot-*/*", "arn:${local.p}:kms:*:${local.account_id}:key/*", "arn:${local.p}:iam::*:role/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "plan_read" {
+  name   = "qwen-spot-plan-read"
+  role   = aws_iam_role.github_plan.id
+  policy = data.aws_iam_policy_document.plan_read.json
+}
+
+output "plan_role_arn" {
+  description = "Set as the repository secret AWS_PLAN_ROLE_ARN."
+  value       = aws_iam_role.github_plan.arn
 }
 
 output "role_arn" {

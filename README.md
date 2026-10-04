@@ -70,8 +70,8 @@ measured yet.
   back to 0. It is all in Terraform and leaves nothing behind.
 - **CI** runs on GitHub-hosted runners: they are free for public repos, and
   self-hosted runners on a public repo would run strangers' PR code on private hardware.
-  `ci.yml` has no AWS access. Plan and apply run only from `terraform.yml`
-  (`workflow_dispatch`) in the protected `aws` environment, through OIDC.
+  `ci.yml` has no AWS access. `terraform.yml` plans on every push with a read-only role and applies only on
+  manual dispatch from `main`, behind the `aws` environment's reviewer, through OIDC.
 - **Retries** are counted by the worker, not by the SQS receive count, because spot
   hand-backs also raise the receive count. `maxReceiveCount` is 5. See "How
   failures behave".
@@ -91,13 +91,14 @@ IAM; review each plan before applying.
 2. **Bootstrap** the CI role once with admin credentials (CI cannot create the role
    it runs as). See [`terraform/bootstrap/README.md`](terraform/bootstrap/README.md).
    This also activates `Project` as a cost allocation tag, which the budget filters on.
-3. **GitHub environment `aws`.** Add a required reviewer and restrict deployments
-   to `main`. Secrets: `AWS_ROLE_ARN` (bootstrap output), `TF_STATE_BUCKET`,
-   `TF_STATE_REGION`, and `TFVARS` (the contents of your `terraform/terraform.tfvars`,
-   see `terraform.tfvars.example`). Secrets rather than variables, so the values
-   are masked in the public workflow logs.
-4. **Infrastructure.** Actions > terraform > Run workflow, `plan`, review, then
-   `apply`. Confirm the SNS subscription email afterwards.
+3. **GitHub.** Environment `aws`: a required reviewer, deployments limited to
+   `main`, and secret `AWS_ROLE_ARN` (the write role). Repository secrets for the
+   plan job: `AWS_PLAN_ROLE_ARN`, `TF_STATE_BUCKET`, `TF_STATE_REGION`, and `TFVARS`
+   (the contents of your `terraform/terraform.tfvars`, see `terraform.tfvars.example`).
+   Secrets rather than variables, so the values are masked in public workflow logs.
+4. **Infrastructure.** Every push that touches `terraform/` runs a read-only plan
+   (no approval). To apply: Actions > terraform > Run workflow > `apply` on `main`;
+   it plans, waits for the reviewer, re-plans and applies only if nothing changed. Confirm the SNS subscription email afterwards.
 5. **Spot quota.** `scripts/check-quotas`; request an increase if it reports less
    than 16 P-family spot vCPUs.
 

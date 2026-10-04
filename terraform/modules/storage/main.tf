@@ -203,7 +203,9 @@ data "aws_iam_policy_document" "bucket" {
     condition {
       test     = "ArnNotLike"
       variable = "aws:PrincipalArn"
-      values   = each.value.allowed
+      # Terraform reads a bucket with HeadBucket, which needs s3:ListBucket, so
+      # the CI roles may list keys. They still cannot read or write objects.
+      values = concat(each.value.allowed, var.listing_principal_arns)
     }
   }
 }

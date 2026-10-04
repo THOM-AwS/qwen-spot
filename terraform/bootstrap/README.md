@@ -1,4 +1,4 @@
-# Bootstrap: GitHub Actions role
+# Bootstrap: GitHub Actions roles
 
 Creates `qwen-spot-github-actions`, the role `.github/workflows/terraform.yml`
 assumes through the account's existing GitHub OIDC provider
@@ -7,6 +7,13 @@ The trust is pinned to the repo's immutable OIDC subject plus the `aws` environm
 so only jobs running in that environment can assume it, and a renamed or
 re-registered repo name cannot take it over. For a fork, set `github_sub_prefix`
 from `gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix`.
+
+It also creates `qwen-spot-github-plan`, a read-only role for the plan job, which
+runs on every push to any branch with no approval. That role trusts branch
+subjects only (`...:ref:refs/heads/*`), can read project resource configuration
+and the state file, plans with `-lock=false`, and can change nothing. The write
+role is explicitly barred from editing it, since anything granted to it would be
+usable without review.
 
 CI cannot create the role it runs as, so a human applies this stack once with
 admin credentials:
@@ -26,16 +33,17 @@ terraform output -raw role_arn
 
 Then in GitHub, repo Settings > Environments > `aws`:
 
-1. Add a **required reviewer**. Each job (plan, then apply) waits for approval
-   separately. Approve apply only after reading the plan job's
+1. Add a **required reviewer**. Only the apply job waits for approval. Plan runs on
+   every push. Approve apply only after reading the plan job's
    summary: apply re-plans and stops if the summary differs.
 2. **Deployment branches: `main` only.** The OIDC trust pins the environment,
    not the branch, so this setting is what stops a dispatched feature branch
    from assuming the role. The workflow also checks `github.ref`.
 3. Secrets (not variables, so they are masked in public logs):
-   `AWS_ROLE_ARN` = the `role_arn` output, `TF_STATE_BUCKET` and `TF_STATE_REGION`
-   = the values in `backend.hcl`, `TFVARS` = the full contents of
-   `terraform/terraform.tfvars`.
+   - **Environment `aws`:** `AWS_ROLE_ARN` = the `role_arn` output.
+   - **Repository** (the plan job has no environment): `AWS_PLAN_ROLE_ARN` = the
+     `plan_role_arn` output, `TF_STATE_BUCKET` and `TF_STATE_REGION` = the values
+     in `backend.hcl`, `TFVARS` = the full contents of `terraform/terraform.tfvars`.
 
 ## What the role can do
 

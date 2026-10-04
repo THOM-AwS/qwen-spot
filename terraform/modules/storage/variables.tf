@@ -23,3 +23,9 @@ variable "results_allowed_principal_arns" {
   description = "Principals exempt from the results bucket data-plane deny."
   type        = list(string)
 }
+
+variable "listing_principal_arns" {
+  description = "Principals that may list keys (Terraform's CI roles, for HeadBucket) but not read or write objects."
+  type        = list(string)
+  default     = []
+}

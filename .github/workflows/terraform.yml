@@ -1,13 +1,17 @@
 name: terraform
 
-# Manual only (workflow_dispatch), main only, never on pull requests. Both jobs run in the "aws"
-# environment (the OIDC trust is pinned to it), whose required reviewer gates
-# each job separately:
-#   1. approve "plan", read the plan summary it writes,
-#   2. approve "apply" only if that summary is what you expect.
-# apply re-plans and refuses to continue unless its summary hash equals the
-# one plan reported, so it never applies something you did not see.
+# plan: every push to any branch (and on demand), read-only role, no approval.
+#   It never writes state (-lock=false) and prints only resource addresses.
+# apply: on demand from main only. The plan job runs first and writes its
+#   summary; the apply job then waits for the required reviewer on the "aws"
+#   environment, re-plans with the write role, and refuses to continue unless
+#   its summary hash equals the plan's, so it never applies something unseen.
 on:
+  push:
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+      - ".github/scripts/**"
   workflow_dispatch:
     inputs:
       action:
@@ -21,7 +25,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: terraform-main
+  group: terraform-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: false
 
 env:
@@ -29,10 +33,8 @@ env:
 
 jobs:
   plan:
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: aws
     outputs:
       summary_sha: ${{ steps.plan.outputs.summary_sha }}
     defaults:
@@ -50,7 +52,7 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
           aws-region: eu-north-1
           role-session-name: qwen-spot-plan-${{ github.run_id }}
 
@@ -75,7 +77,7 @@ jobs:
       - name: Plan
         id: plan
         run: |
-          ../.github/scripts/tf-quiet.sh plan -input=false -no-color -out=tfplan
+          ../.github/scripts/tf-quiet.sh plan -input=false -no-color -lock=false -out=tfplan
           terraform show -json tfplan | jq -r '
             .resource_changes[]
             | select(.change.actions != ["no-op"])
@@ -96,7 +98,7 @@ jobs:
 
   apply:
     needs: plan
-    if: github.ref == 'refs/heads/main' && inputs.action == 'apply'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.action == 'apply'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: aws
