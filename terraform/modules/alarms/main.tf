@@ -12,21 +12,107 @@ resource "aws_sns_topic_subscription" "email" {
 # SQS metrics lag by a minute or more, and a queue idle for 6+ hours can take
 # up to ~15 minutes to resume reporting. This alarm is the backstop; the client
 # wake call is the fast path.
+#
+# Circuit breaker: it only wakes the group while the oldest message is younger
+# than stuck_queue_seconds. Once requests have waited that long with nothing in
+# flight, the stalled alarm below sets capacity to 0, and this alarm must not
+# relaunch the same broken worker every minute. A client wake still works.
 resource "aws_cloudwatch_metric_alarm" "scale_out" {
   count = var.worker_group_enabled ? 1 : 0
 
   alarm_name          = "${var.name_prefix}-scale-out"
-  alarm_description   = "Messages waiting: set worker capacity to 1."
-  namespace           = "AWS/SQS"
-  metric_name         = "ApproximateNumberOfMessagesVisible"
-  dimensions          = { QueueName = var.queue_name }
-  statistic           = "Maximum"
-  period              = 60
-  evaluation_periods  = 1
-  threshold           = 1
+  alarm_description   = "Messages waiting (and not stuck): set worker capacity to 1."
   comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 1
+  evaluation_periods  = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = [var.wake_policy_arn]
+
+  metric_query {
+    id          = "wake"
+    expression  = "IF(FILL(visible, 0) >= 1 AND FILL(age, 0) < ${var.stuck_queue_seconds}, 1, 0)"
+    label       = "Fresh messages waiting"
+    return_data = true
+  }
+
+  metric_query {
+    id = "visible"
+    metric {
+      namespace   = "AWS/SQS"
+      metric_name = "ApproximateNumberOfMessagesVisible"
+      dimensions  = { QueueName = var.queue_name }
+      stat        = "Maximum"
+      period      = 60
+    }
+  }
+
+  metric_query {
+    id = "age"
+    metric {
+      namespace   = "AWS/SQS"
+      metric_name = "ApproximateAgeOfOldestMessage"
+      dimensions  = { QueueName = var.queue_name }
+      stat        = "Maximum"
+      period      = 60
+    }
+  }
+}
+
+# A worker that is up while requests wait and none is taken (vLLM never became
+# healthy, the worker crashed). Nothing in flight, so a busy healthy worker is
+# never stopped; in service, so a group that simply has no spot capacity is left
+# to the stuck_queue email. Sets capacity to 0 and emails.
+resource "aws_cloudwatch_metric_alarm" "stalled" {
+  count = var.worker_group_enabled ? 1 : 0
+
+  alarm_name          = "${var.name_prefix}-stalled"
+  alarm_description   = "Worker in service, requests waiting over ${var.stuck_queue_seconds / 60} min and none in flight: capacity set to 0. Check the vllm and worker logs."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 1
+  evaluation_periods  = 5
+  datapoints_to_alarm = 5
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [var.sleep_policy_arn, aws_sns_topic.alerts.arn]
+
+  metric_query {
+    id          = "stalled"
+    expression  = "IF(FILL(inservice, 0) >= 1 AND FILL(age, 0) >= ${var.stuck_queue_seconds} AND FILL(inflight, 0) == 0, 1, 0)"
+    label       = "In service, stuck queue, nothing in flight"
+    return_data = true
+  }
+
+  metric_query {
+    id = "inservice"
+    metric {
+      namespace   = "AWS/AutoScaling"
+      metric_name = "GroupInServiceInstances"
+      dimensions  = { AutoScalingGroupName = var.asg_name }
+      stat        = "Maximum"
+      period      = 60
+    }
+  }
+
+  metric_query {
+    id = "age"
+    metric {
+      namespace   = "AWS/SQS"
+      metric_name = "ApproximateAgeOfOldestMessage"
+      dimensions  = { QueueName = var.queue_name }
+      stat        = "Maximum"
+      period      = 60
+    }
+  }
+
+  metric_query {
+    id = "inflight"
+    metric {
+      namespace   = "AWS/SQS"
+      metric_name = "ApproximateNumberOfMessagesNotVisible"
+      dimensions  = { QueueName = var.queue_name }
+      stat        = "Maximum"
+      period      = 60
+    }
+  }
 }
 
 resource "aws_cloudwatch_metric_alarm" "stuck_queue" {

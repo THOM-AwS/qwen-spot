@@ -212,6 +212,8 @@ result and never changes capacity, so a `qwenq down` is not undone.
 | Message arrives while the worker scales in | The queue counts lag, so 15 s after setting capacity 0 the worker checks the queue again and sets capacity back to 1 if anything is there. The scale-out alarm is the second backstop. `qwenq wait` never changes capacity, so `qwenq down` sticks. |
 | Duplicate delivery | If an `ok` result already exists, the worker deletes the message without generating. |
 | Instance up longer than `max_uptime_hours` | Email only. Nothing is terminated. |
+| Worker idle but does not scale itself in | The idle backstop alarm: in service with nothing waiting or in flight for `idle_backstop_minutes` (18) sets capacity to 0 and emails. |
+| Worker up but taking nothing (vLLM never healthy, worker crashed) | Requests age past `stuck_queue_seconds` (20 min) with nothing in flight. The `stalled` alarm sets capacity to 0 and emails, and the scale-out alarm stops waking the group for requests that old, so the broken worker is not relaunched every minute. A `qwenq ask` still wakes it. Worst case is about 25 minutes of instance time. |
 
 ## Cost
 
