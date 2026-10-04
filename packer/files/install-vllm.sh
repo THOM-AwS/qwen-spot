@@ -43,9 +43,13 @@ PY
       torch==*+cpu) ;;
       *) echo "unexpected torch requirement in $wheel: '$torch_req'" >&2; exit 1 ;;
     esac
+    # torchvision and torchaudio come from the same index in the same resolve:
+    # their wheels pin an exact torch, so only the +cpu builds for this torch
+    # satisfy it. Left to PyPI they arrive built against a different torch and
+    # vLLM dies at import with "operator torchvision::nms does not exist".
     uv pip install --python "$VENV/bin/python" \
       --index-url https://download.pytorch.org/whl/cpu \
-      "$torch_req"
+      "$torch_req" torchvision torchaudio
     uv pip install --python "$VENV/bin/python" \
       "vllm[runai] @ file://$work/$wheel"
     rm -rf "$work"
@@ -58,8 +62,16 @@ esac
 
 "$VENV/bin/python" - <<'EOF'
 import importlib.metadata as m
-for pkg in ("vllm", "torch", "runai-model-streamer"):
+for pkg in ("vllm", "torch", "torchvision", "torchaudio", "runai-model-streamer"):
     print(pkg, m.version(pkg))
+
+# Fail the build, not the first boot, on a torch/torchvision mismatch: importing
+# vLLM registers torchvision ops and raises if the builds do not match.
+import torch
+import torchvision  # noqa: F401
+assert hasattr(torch.ops.torchvision, "nms"), "torchvision ops not registered for this torch"
+import vllm  # noqa: F401
+print("vllm import ok")
 EOF
 
 rm -rf "$UV_CACHE_DIR"
