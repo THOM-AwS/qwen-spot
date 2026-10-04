@@ -16,9 +16,31 @@ set -a
 . /etc/qwen-spot/uploader.env
 set +a
 
+# Ship this job's log to CloudWatch before the instance goes away. The instance
+# terminates within seconds of finishing, so the serial console is never
+# captured; without this a failure leaves no trace.
+cat > /opt/qwen-spot/ship_log.py <<'QWEN_SHIP_EOF'
+import os, time, boto3
+group = os.environ["QWEN_LOG_GROUP"]
+stream = open("/var/lib/cloud/data/instance-id").read().strip()
+logs = boto3.client("logs", region_name=os.environ["QWEN_REGION"])
+try:
+    logs.create_log_stream(logGroupName=group, logStreamName=stream)
+except logs.exceptions.ResourceAlreadyExistsException:
+    pass
+lines = open("/var/log/qwen-uploader.log", errors="replace").read().splitlines() or ["(empty log)"]
+now = int(time.time() * 1000)
+for i in range(0, len(lines), 1000):
+    events = [{"timestamp": now, "message": line[:200000] or " "} for line in lines[i : i + 1000]]
+    logs.put_log_events(logGroupName=group, logStreamName=stream, logEvents=events)
+print(f"log shipped to {group}/{stream}")
+QWEN_SHIP_EOF
+
 scale_to_zero() {
   rc=$?
   echo "uploader exiting rc=$rc, scaling ${asg_name} to 0"
+  /opt/qwen-spot/uv/uv run --no-project --exclude-newer 2026-10-04T00:00:00Z --with 'boto3==1.43.108' \
+    python3 /opt/qwen-spot/ship_log.py || echo "could not ship the log to CloudWatch"
   for _ in 1 2 3 4 5; do
     if /opt/qwen-spot/uv/uv run --no-project --exclude-newer 2026-10-04T00:00:00Z --with 'boto3==1.43.108' python3 -c \
       "import boto3; boto3.client('autoscaling', region_name='${region}').set_desired_capacity(AutoScalingGroupName='${asg_name}', DesiredCapacity=0, HonorCooldown=False)"; then

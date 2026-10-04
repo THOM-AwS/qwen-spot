@@ -60,6 +60,19 @@ def console_events(ec2, instance_id: str) -> list[dict]:
     return events
 
 
+def print_uploader_log(logs, group: str, stream: str, tail: int = 40) -> None:
+    """The uploader ships its log here on exit. Show the end of it."""
+    print(f"uploader {stream} exited without a completion event; last lines of {group}/{stream}:", file=sys.stderr)
+    time.sleep(10)  # put_log_events is eventually consistent
+    try:
+        events = logs.get_log_events(logGroupName=group, logStreamName=stream, startFromHead=False, limit=tail)
+    except ClientError as exc:
+        print(f"  (no log: {exc.response['Error']['Code']})", file=sys.stderr)
+        return
+    for event in events["events"]:
+        print(f"  {event['message']}", file=sys.stderr)
+
+
 def group_state(autoscaling, name: str) -> str:
     groups = autoscaling.describe_auto_scaling_groups(AutoScalingGroupNames=[name])["AutoScalingGroups"]
     if not groups:
@@ -98,6 +111,7 @@ def main() -> int:
 
     autoscaling = session.client("autoscaling")
     ec2 = session.client("ec2")
+    log_group = outputs.get("uploader_log_group") or "/qwen-spot/uploader"
     target = f"s3://{bucket}/models/{model_name}/{revision}/"
 
     confirm(f"Start uploader {asg} in {region} to fetch {model_name}@{revision[:12]} into {target}?", args.yes)
@@ -113,6 +127,10 @@ def main() -> int:
             instances = groups[0]["Instances"] if groups else []
             if instances:
                 instance_id = instances[0]["InstanceId"]
+            elif instance_id and groups and groups[0]["DesiredCapacity"] == 0:
+                # The uploader scaled itself to 0 without a completion event we saw.
+                print_uploader_log(session.client("logs"), log_group, instance_id)
+                return 1
             if instance_id:
                 for event in console_events(ec2, instance_id):
                     key = json.dumps(event, sort_keys=True)

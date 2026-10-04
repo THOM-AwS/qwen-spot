@@ -92,3 +92,8 @@ output "instance_types" {
 output "max_instances" {
   value = var.max_instances
 }
+
+output "uploader_log_group" {
+  description = "The uploader ships its log here (one stream per instance id) before it scales itself to 0."
+  value       = aws_cloudwatch_log_group.uploader.name
+}
