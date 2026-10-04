@@ -24,18 +24,43 @@ while there is work. Idle cost is storage (S3, AMI snapshot, one KMS key).
 Weights are streamed from S3 into GPU memory with vLLM's Run:ai streamer
 (`--load-format runai_streamer`), so there is no model on the AMI or the root disk.
 
-## Status
+## Status (2026-10-04)
 
 | Step | State |
 |---|---|
-| 1. Repo, Terraform modules, CI | done; `terraform validate`, tflint, `packer validate` clean |
+| 1. Repo, Terraform modules, CI | done. Plan runs on every push with a read-only role; apply is manual and gated |
 | 2. Worker and client, tested against moto and a fake vLLM | done; 65 tests, 87% coverage |
-| 3. End-to-end on a CPU spot instance with Qwen3-0.6B | not run yet |
-| 4. Packer AMI, model upload, first H100 run | not run yet |
-| 5. Alarms, budget, interruption handling | written and unit-tested; not yet exercised in AWS |
+| Infrastructure | applied in eu-north-1; refreshed plan shows no drift |
+| 3. End-to-end on a CPU spot instance with Qwen3-0.6B | in progress, see below |
+| 4. Packer GPU AMI, 27B model upload, first H100 run | not started |
+| 5. Alarms, budget, interruption handling | deployed; not yet exercised end to end |
 
-None of the acceptance tests in AWS have run yet. The cold-start figure is not
-measured yet.
+End-to-end run so far:
+
+- The model upload works (Qwen3-0.6B, about 30 s on the uploader).
+- Cold path: `qwenq ask` woke the group, and a spot c7i.2xlarge was InService in about
+  25 s. Units started in order, weights copied from S3 in 6 s, and the worker waited
+  on vLLM health.
+- vLLM then crashed at import (`torchvision::nms does not exist`): the CPU image
+  paired torch `2.13.0+cpu` with a PyPI torchvision. Fixed in `install-vllm.sh`, and
+  the build now imports vLLM. The rebuilt AMI `qwen-spot-cpu-20261004081641` passed
+  that check but has not booted a worker yet.
+
+To resume:
+
+1. **Re-enable the scale-out alarm.** It was disabled by hand to stop spend (see
+   "Manual changes outstanding" below). The next apply turns it back on: `actions_enabled`
+   defaults to true, so Terraform sees the drift.
+2. **Apply**, so the worker launch template picks up the rebuilt AMI.
+3. **Re-run the cold, warm, idle and interruption tests.** One test request is still
+   queued and will be served first.
+4. **Deregister the broken AMI** `qwen-spot-cpu-20261004065936` and its snapshot.
+
+### Manual changes outstanding
+
+| When (UTC) | Change | Why | Undo |
+|---|---|---|---|
+| 2026-10-04 08:20 | `aws cloudwatch disable-alarm-actions --alarm-names qwen-spot-scale-out` | A queued test request kept waking a worker on the broken AMI, which never becomes healthy and so never scales in | The next `apply` re-enables it |
 
 ## Checked facts (2026-10-04)
 
