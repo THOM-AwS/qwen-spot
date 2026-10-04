@@ -71,7 +71,7 @@ case "$QWEN_ENGINE" in
     ;;
   cpu)
     export VLLM_CPU_KVCACHE_SPACE="${QWEN_CPU_KVCACHE_GB:-4}"
-    preload=$(cpu_ld_preload) || { log error vllm-start "CPU runtime libraries missing"; exit 1; }
+    preload=$(cpu_ld_preload "$VLLM_VENV") || { log error vllm-start "CPU runtime libraries missing"; exit 1; }
     export LD_PRELOAD="$preload${LD_PRELOAD:+:$LD_PRELOAD}"
     ;;
   *)
