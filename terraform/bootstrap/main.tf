@@ -188,21 +188,41 @@ data "aws_iam_policy_document" "boundary" {
     resources = ["arn:${local.p}:logs:*:${local.account_id}:log-group:/qwen-spot/*"]
   }
 
-  # qwen-spot-client: port forwarding to tagged workers only. The client role's own
-  # policy narrows this further (document access check, worker tag).
+  # qwen-spot-client: port forwarding to qwen-spot workers only.
   statement {
-    sid     = "ClientTunnel"
-    actions = ["ssm:StartSession"]
-    resources = [
-      "arn:${local.p}:ssm:*::document/AWS-StartPortForwardingSession",
-      "arn:${local.p}:ec2:*:${local.account_id}:instance/*",
-    ]
+    sid       = "ClientTunnelDocument"
+    actions   = ["ssm:StartSession"]
+    resources = ["arn:${local.p}:ssm:*::document/AWS-StartPortForwardingSession"]
+  }
+
+  statement {
+    sid       = "ClientTunnelWorkers"
+    actions   = ["ssm:StartSession"]
+    resources = ["arn:${local.p}:ec2:*:${local.account_id}:instance/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ssm:resourceTag/Project"
+      values   = ["qwen-spot"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "ssm:resourceTag/Role"
+      values   = ["worker"]
+    }
   }
 
   statement {
     sid       = "ClientOwnSessions"
     actions   = ["ssm:TerminateSession", "ssm:ResumeSession"]
     resources = ["arn:${local.p}:ssm:*:${local.account_id}:session/*"]
+
+    condition {
+      test     = "StringLike"
+      variable = "ssm:resourceTag/aws:ssmmessages:session-id"
+      values   = ["$${aws:userid}"]
+    }
   }
 
   # Read-only describes and the SSM agent channel have no resource-level scoping.
@@ -211,7 +231,6 @@ data "aws_iam_policy_document" "boundary" {
     actions = [
       "autoscaling:Describe*",
       "logs:DescribeLogGroups",
-      "cloudwatch:PutMetricData",
       "ec2:DescribeInstances",
       "ec2:DescribeTags",
       "ec2:DescribeVolumes",
@@ -234,6 +253,18 @@ data "aws_iam_policy_document" "boundary" {
       "ssm:UpdateInstanceAssociationStatus",
     ]
     resources = ["*"]
+  }
+
+  statement {
+    sid       = "ProjectMetrics"
+    actions   = ["cloudwatch:PutMetricData"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "cloudwatch:namespace"
+      values   = ["QwenSpot"]
+    }
   }
 
   statement {
