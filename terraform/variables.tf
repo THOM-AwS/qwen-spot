@@ -178,7 +178,7 @@ variable "compile_cache_enabled" {
 variable "idle_minutes" {
   description = "Minutes of empty queue with nothing in flight before the worker scales the group to 0."
   type        = number
-  default     = 5
+  default     = 15
 
   validation {
     condition     = var.idle_minutes >= 1

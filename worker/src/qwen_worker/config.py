@@ -20,7 +20,7 @@ class WorkerConfig:
     results_bucket: str
     asg_name: str
     model_name: str
-    idle_minutes: float = 5.0
+    idle_minutes: float = 15.0
     concurrency: int = 8
     visibility_timeout: int = 900
     max_receive_count: int = 5
@@ -64,7 +64,7 @@ class WorkerConfig:
             results_bucket=required("QWEN_RESULTS_BUCKET"),
             asg_name=required("QWEN_ASG_NAME"),
             model_name=required("QWEN_MODEL_NAME"),
-            idle_minutes=number("QWEN_IDLE_MINUTES", 5.0, 0.0),
+            idle_minutes=number("QWEN_IDLE_MINUTES", 15.0, 0.0),
             concurrency=int(number("QWEN_WORKER_CONCURRENCY", 8, 1)),
             visibility_timeout=int(number("QWEN_VISIBILITY_TIMEOUT", 900, 30)),
             max_receive_count=int(number("QWEN_MAX_RECEIVE_COUNT", 5, 1)),

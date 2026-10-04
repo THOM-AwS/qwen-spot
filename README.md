@@ -18,7 +18,7 @@ while there is work. Idle cost is storage (S3, AMI snapshot, one KMS key).
     │                                       │ write result, delete message
     ▼                                       ▼
  poll S3 ◄────────────── results/<request_id>.json (S3, SSE-KMS)
-                         idle 5 min, empty queue ──► worker sets capacity 0
+                         idle 15 min, empty queue ─► worker sets capacity 0
 ```
 
 Weights are streamed from S3 into GPU memory with vLLM's Run:ai streamer
@@ -192,9 +192,10 @@ covers a submit that lands as the worker scales in.
 
 - **Idle:** about 1 USD/month for the KMS key, plus about 1.3 USD/month to keep
   55 GB of weights in S3, plus AMI snapshot storage of about 2 USD/month.
-- **One cold 5-minute job:** about 15 minutes of instance time. That breaks down
-  as roughly 4 to 5 minutes of boot and load, 5 minutes of work, and 5 minutes of
-  idle. At 1.64 USD/hr this is about 0.40 USD.
+- **One cold 5-minute job:** about 25 minutes of instance time. That breaks down
+  as roughly 4 to 5 minutes of boot and load, 5 minutes of work, and 15 minutes of
+  idle. At 1.64 USD/hr this is about 0.70 USD. A shorter `idle_minutes` saves
+  about 0.27 USD per 10 minutes but cold-starts more often.
 - **Cold-start target** is under 5 minutes to first token. Not measured yet.
 - **Risk to measure on the first run:** EBS volumes restored from a snapshot load
   lazily. vLLM's first import of torch and CUDA libraries (several GB) reads

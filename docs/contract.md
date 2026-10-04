@@ -47,7 +47,7 @@ runs `systemctl start qwen-nvme qwen-cwagent vllm qwen-worker`.
 | `QWEN_VLLM_EXTRA_ARGS` | `--language-model-only` (space separated) | vllm-start |
 | `QWEN_ENGINE` | `gpu` or `cpu` (CPU is for the cheap end-to-end test) | vllm-start |
 | `QWEN_COMPILE_CACHE_S3_URI` | `s3://<weights>/cache/vllm/<model_name>/<revision>/` or empty to disable | vllm-start, cache-sync |
-| `QWEN_IDLE_MINUTES` | `5` | worker |
+| `QWEN_IDLE_MINUTES` | `15` | worker |
 | `QWEN_WORKER_CONCURRENCY` | `8` | worker |
 | `QWEN_VISIBILITY_TIMEOUT` | `900` | worker |
 | `QWEN_MAX_RECEIVE_COUNT` | `5` (SQS redrive `maxReceiveCount`) | worker |
