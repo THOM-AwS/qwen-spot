@@ -147,18 +147,17 @@ class QwenQueue:
         on_progress: Callable[[str], None] = lambda _msg: None,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
-        rewake_every_s: float = 60.0,
     ) -> dict[str, Any]:
         """Poll S3 with backoff until a final result exists.
 
         Retryable errors (``final: false``) are reported and waiting continues.
-        Every ``rewake_every_s`` the group is woken again if it dropped to 0
-        while the request is still pending: this covers a submit that landed
-        just as the worker scaled in.
+        It never changes capacity: re-waking here overrode a deliberate
+        ``qwenq down``. A submit that races the worker's scale-in is covered by
+        the worker (it re-checks the queue after scaling in) and by the
+        scale-out alarm.
         """
         deadline = clock() + timeout_s
         delay = 2.0
-        last_rewake = clock()
         reported_attempt = 0
         while True:
             result = self.get_result(request_id)
@@ -171,10 +170,6 @@ class QwenQueue:
                     on_progress(f"attempt {attempt} failed, retrying: {result.get('error')}")
             if clock() >= deadline:
                 raise ResultTimeout(f"no result for {request_id} after {timeout_s:.0f}s")
-            if clock() - last_rewake >= rewake_every_s:
-                last_rewake = clock()
-                if self.wake():
-                    on_progress("group was at 0 with work pending, woke it again")
             sleep(delay)
             delay = min(delay * 1.5, 15.0)
 

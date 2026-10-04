@@ -61,6 +61,7 @@ To resume:
 | When (UTC) | Change | Why | Undo |
 |---|---|---|---|
 | 2026-10-04 08:20 | `aws cloudwatch disable-alarm-actions --alarm-names qwen-spot-scale-out` | A queued test request kept waking a worker on the broken AMI, which never becomes healthy and so never scales in | The next `apply` re-enables it |
+| 2026-10-04 11:02 | Same again, plus `set-desired-capacity 0` | The rebuilt CPU AMI still failed at `vllm serve` (PyPI torchcodec is a CUDA build: `libnvrtc.so.13` missing) | The next `apply` re-enables it |
 
 ## Checked facts (2026-10-04)
 
@@ -172,9 +173,8 @@ scripts/spot-prices --types p5.4xlarge
 scripts/check-quotas
 ```
 
-`ask` and `submit` wake the group when it is at 0. While `wait` runs, it wakes
-the group again if the group dropped to 0 with the request still pending. That
-covers a submit that lands as the worker scales in.
+`ask` and `submit` wake the group when it is at 0. `wait` only polls for the
+result and never changes capacity, so a `qwenq down` is not undone.
 
 ### Message schema
 
@@ -209,7 +209,7 @@ covers a submit that lands as the worker scales in.
 | vLLM 4xx (bad params, prompt too long) | Final error result; the message is deleted. No retry. |
 | Malformed message | Error result if the id is readable; the message is deleted. |
 | Spot interruption or ASG termination | The worker stops receiving and sets in-flight messages to visibility 0. The next instance picks them up. Hand-backs raise the SQS receive count but not `attempt`. That is why the queue's `maxReceiveCount` is 5 (`max_receive_count`) rather than the brief's 3: the DLQ only catches messages that keep killing the worker, and the worker writes a final error result on the last receive. |
-| Message arrives while the worker scales in | The queue counts lag, so 15 s after setting capacity 0 the worker checks the queue again and sets capacity back to 1 if anything is there. `qwenq wait` also wakes the group again if it finds it at 0. |
+| Message arrives while the worker scales in | The queue counts lag, so 15 s after setting capacity 0 the worker checks the queue again and sets capacity back to 1 if anything is there. The scale-out alarm is the second backstop. `qwenq wait` never changes capacity, so `qwenq down` sticks. |
 | Duplicate delivery | If an `ok` result already exists, the worker deletes the message without generating. |
 | Instance up longer than `max_uptime_hours` | Email only. Nothing is terminated. |
 

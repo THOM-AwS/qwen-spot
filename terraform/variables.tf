@@ -186,6 +186,17 @@ variable "idle_minutes" {
   }
 }
 
+variable "idle_backstop_minutes" {
+  description = "If an instance is in service with an empty queue for this long, an alarm sets capacity to 0 and emails. Backstop for the worker's own idle scale-in, so it must leave the worker time to act."
+  type        = number
+  default     = 18
+
+  validation {
+    condition     = var.idle_backstop_minutes >= var.idle_minutes + 2 && var.idle_backstop_minutes <= 60
+    error_message = "idle_backstop_minutes must be at least idle_minutes + 2 (the worker scales in first) and at most 60."
+  }
+}
+
 variable "worker_concurrency" {
   description = "Messages processed in parallel by the worker."
   type        = number

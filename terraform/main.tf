@@ -174,16 +174,18 @@ module "compute" {
 module "alarms" {
   source = "./modules/alarms"
 
-  name_prefix          = var.name_prefix
-  kms_key_arn          = aws_kms_key.main.arn
-  alert_email          = var.alert_email
-  queue_name           = module.queue.queue_name
-  dlq_name             = module.queue.dlq_name
-  asg_name             = module.compute.asg_name
-  wake_policy_arn      = module.compute.wake_policy_arn
-  worker_group_enabled = module.compute.worker_group_enabled
-  max_uptime_hours     = var.max_uptime_hours
-  monthly_budget_usd   = var.monthly_budget_usd
+  name_prefix           = var.name_prefix
+  kms_key_arn           = aws_kms_key.main.arn
+  alert_email           = var.alert_email
+  queue_name            = module.queue.queue_name
+  dlq_name              = module.queue.dlq_name
+  asg_name              = module.compute.asg_name
+  wake_policy_arn       = module.compute.wake_policy_arn
+  worker_group_enabled  = module.compute.worker_group_enabled
+  sleep_policy_arn      = module.compute.sleep_policy_arn
+  idle_backstop_minutes = var.idle_backstop_minutes
+  max_uptime_hours      = var.max_uptime_hours
+  monthly_budget_usd    = var.monthly_budget_usd
 }
 
 resource "aws_cloudwatch_log_group" "worker" {

@@ -5,7 +5,7 @@ One template, two sources:
 | Source | Base | Build instance | Root | Purpose |
 |---|---|---|---|---|
 | `amazon-ebs.gpu` | Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 24.04), newest | `c7i.2xlarge` | 100 GB gp3 | H100 worker |
-| `amazon-ebs.cpu` | Canonical Ubuntu 24.04 (noble), newest | `c7i.large` | 30 GB gp3 | cheap end-to-end test with a tiny model |
+| `amazon-ebs.cpu` | Canonical Ubuntu 24.04 (noble), newest | `c7i.2xlarge` | 30 GB gp3 | cheap end-to-end test with a tiny model |
 
 The gpu image is built on a CPU instance. Installing vLLM does not need a GPU;
 the NVIDIA driver in the DLAMI only loads when the AMI boots on the H100.

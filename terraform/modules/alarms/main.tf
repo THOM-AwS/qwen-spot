@@ -106,3 +106,65 @@ resource "aws_budgets_budget" "monthly" {
     subscriber_email_addresses = [var.alert_email]
   }
 }
+
+# Backstop for the worker's own idle scale-in. Fires when an instance is in
+# service while the queue has nothing waiting and nothing in flight for
+# idle_backstop_minutes in a row, and then sets capacity to 0 and emails. It
+# measures inactivity, not uptime, and does not depend on the worker being
+# healthy. SQS stops publishing metrics for an idle queue, so missing queue
+# data counts as empty (FILL 0); otherwise the alarm would go blind exactly
+# when the queue is idle.
+resource "aws_cloudwatch_metric_alarm" "idle_backstop" {
+  count = var.worker_group_enabled ? 1 : 0
+
+  alarm_name          = "${var.name_prefix}-idle-backstop"
+  alarm_description   = "Worker in service with an empty queue for ${var.idle_backstop_minutes} min: it did not scale itself in. Capacity set to 0."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 1
+  evaluation_periods  = var.idle_backstop_minutes
+  datapoints_to_alarm = var.idle_backstop_minutes
+  # FILL already covers a missing SQS series. No data at all means no group
+  # metrics either (nothing to scale in), so do not alarm on it.
+  treat_missing_data = "notBreaching"
+  alarm_actions      = [var.sleep_policy_arn, aws_sns_topic.alerts.arn]
+
+  metric_query {
+    id          = "idle"
+    expression  = "IF(FILL(inservice, 0) >= 1 AND FILL(visible, 0) == 0 AND FILL(inflight, 0) == 0, 1, 0)"
+    label       = "In service with an empty queue"
+    return_data = true
+  }
+
+  metric_query {
+    id = "inservice"
+    metric {
+      namespace   = "AWS/AutoScaling"
+      metric_name = "GroupInServiceInstances"
+      dimensions  = { AutoScalingGroupName = var.asg_name }
+      stat        = "Maximum"
+      period      = 60
+    }
+  }
+
+  metric_query {
+    id = "visible"
+    metric {
+      namespace   = "AWS/SQS"
+      metric_name = "ApproximateNumberOfMessagesVisible"
+      dimensions  = { QueueName = var.queue_name }
+      stat        = "Maximum"
+      period      = 60
+    }
+  }
+
+  metric_query {
+    id = "inflight"
+    metric {
+      namespace   = "AWS/SQS"
+      metric_name = "ApproximateNumberOfMessagesNotVisible"
+      dimensions  = { QueueName = var.queue_name }
+      stat        = "Maximum"
+      period      = 60
+    }
+  }
+}

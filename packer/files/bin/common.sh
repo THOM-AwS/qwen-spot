@@ -25,6 +25,20 @@ require_env() {
   return "$missing"
 }
 
+# vLLM's CPU wheel must run with Intel OpenMP and tcmalloc preloaded, as the
+# official CPU image does (docker/Dockerfile.cpu). Without it the engine core
+# process never comes up. Prints the LD_PRELOAD value; fails if a library is
+# missing so the caller does not start a vLLM that will hang.
+cpu_ld_preload() {
+  local venv=${1:-$VLLM_VENV} iomp tcmalloc=/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4
+  iomp=$(find "$venv" -name 'libiomp5.so' -print -quit)
+  if [ -z "$iomp" ] || [ ! -e "$tcmalloc" ]; then
+    echo "missing libiomp5.so ($iomp) or $tcmalloc" >&2
+    return 1
+  fi
+  printf '%s:%s' "$tcmalloc" "$iomp"
+}
+
 # Normalise an S3 prefix to have exactly one trailing slash.
 with_slash() {
   printf '%s/' "${1%/}"

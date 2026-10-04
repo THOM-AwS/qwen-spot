@@ -12,7 +12,7 @@ variable "gpu_build_instance_type" {
 
 variable "cpu_build_instance_type" {
   type        = string
-  default     = "c7i.large"
+  default     = "c7i.2xlarge"
   description = "Instance type for the cpu (end-to-end test) build."
 }
 

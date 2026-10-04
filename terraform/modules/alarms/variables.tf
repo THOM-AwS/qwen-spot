@@ -44,3 +44,13 @@ variable "stuck_queue_seconds" {
   type        = number
   default     = 1200
 }
+
+variable "sleep_policy_arn" {
+  description = "Scaling policy that sets the worker group to 0."
+  type        = string
+  default     = null
+}
+
+variable "idle_backstop_minutes" {
+  type = number
+}

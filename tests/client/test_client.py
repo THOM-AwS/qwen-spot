@@ -94,17 +94,22 @@ def test_wait_times_out(aws: Aws) -> None:
         make_queue(aws).wait("nope", timeout_s=250, sleep=lambda _s: None, clock=lambda: next(clock))
 
 
-def test_wait_rewakes_group_that_scaled_in(aws: Aws) -> None:
+def test_wait_never_changes_capacity(aws: Aws) -> None:
+    """A wait must not undo a deliberate `qwenq down`."""
     queue = make_queue(aws)
     rid = "11111111-1111-4111-8111-111111111111"
     ticks = iter(range(0, 10_000, 30))
+    calls = {"n": 0}
 
     def sleep(_s: float) -> None:
-        if aws.desired() == 1:
+        calls["n"] += 1
+        assert aws.desired() == 0
+        if calls["n"] == 5:
             put_result(aws, rid, status="ok", output="late")
 
-    result = queue.wait(rid, sleep=sleep, clock=lambda: next(ticks), rewake_every_s=60)
+    result = queue.wait(rid, sleep=sleep, clock=lambda: next(ticks))
     assert result["output"] == "late"
+    assert aws.desired() == 0
 
 
 def test_up_down_and_status(aws: Aws, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:

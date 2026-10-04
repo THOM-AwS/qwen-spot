@@ -24,3 +24,7 @@ output "ami_id" {
 output "launch_template_id" {
   value = aws_launch_template.worker.id
 }
+
+output "sleep_policy_arn" {
+  value = try(aws_autoscaling_policy.sleep[0].arn, null)
+}

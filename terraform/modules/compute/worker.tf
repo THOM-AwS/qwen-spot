@@ -149,3 +149,15 @@ resource "aws_autoscaling_policy" "wake" {
   scaling_adjustment     = 1
   cooldown               = 60
 }
+
+# Used by the idle backstop alarm when the worker fails to scale itself in.
+resource "aws_autoscaling_policy" "sleep" {
+  count = local.worker_group_enabled ? 1 : 0
+
+  name                   = "${var.name_prefix}-sleep"
+  autoscaling_group_name = aws_autoscaling_group.worker[0].name
+  policy_type            = "SimpleScaling"
+  adjustment_type        = "ExactCapacity"
+  scaling_adjustment     = 0
+  cooldown               = 60
+}
