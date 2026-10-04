@@ -56,6 +56,10 @@ measured yet.
 - **Account choice.** Prefer a dedicated member account. Service control policies
   never apply to an AWS Organizations management account, so there the only guards
   are the IAM scoping, the spot price cap, the alarms and the budget.
+- **Clients assume a role.** No policy is attached to a user. `client_principal_arns`
+  may assume `qwen-spot-client`, which carries the permissions boundary, so a
+  change to the client policy can never grant a human principal more than the
+  boundary allows.
 - **Default model** is huihui-ai rather than wangzhang (see above). wangzhang is
   one variable away.
 - **Encryption** uses one customer-managed KMS key (rotation on) for both buckets,
@@ -116,6 +120,20 @@ qwenq configure --terraform-dir terraform   # needs terraform output access, or 
 ```
 
 ## Use
+
+`qwenq` runs as the `qwen-spot-client` role: only that role and the worker can
+use the queue and the results bucket. Add a profile that assumes it (the ARN is
+the `client_role_arn` output), and allow your user `sts:AssumeRole` on it:
+
+```ini
+# ~/.aws/config
+[profile qwen-spot]
+role_arn       = arn:aws:iam::<account>:role/qwen-spot-client
+source_profile = <your-profile>
+region         = eu-north-1
+```
+
+Then `export AWS_PROFILE=qwen-spot`, or pass `--profile qwen-spot`.
 
 ```bash
 qwenq ask "Explain the CAP theorem in two sentences" --no-think

@@ -63,12 +63,6 @@ variable "github_environment" {
   default     = "aws"
 }
 
-variable "client_user_names" {
-  description = "IAM users the main stack may attach the qwen-spot-client policy to. Empty means none."
-  type        = list(string)
-  default     = []
-}
-
 variable "state_bucket" {
   description = "S3 bucket holding Terraform state (the same one as in backend.hcl). CI gets access to its qwen-spot/ prefix."
   type        = string
@@ -194,6 +188,23 @@ data "aws_iam_policy_document" "boundary" {
     resources = ["arn:${local.p}:logs:*:${local.account_id}:log-group:/qwen-spot/*"]
   }
 
+  # qwen-spot-client: port forwarding to tagged workers only. The client role's own
+  # policy narrows this further (document access check, worker tag).
+  statement {
+    sid     = "ClientTunnel"
+    actions = ["ssm:StartSession"]
+    resources = [
+      "arn:${local.p}:ssm:*::document/AWS-StartPortForwardingSession",
+      "arn:${local.p}:ec2:*:${local.account_id}:instance/*",
+    ]
+  }
+
+  statement {
+    sid       = "ClientOwnSessions"
+    actions   = ["ssm:TerminateSession", "ssm:ResumeSession"]
+    resources = ["arn:${local.p}:ssm:*:${local.account_id}:session/*"]
+  }
+
   # Read-only describes and the SSM agent channel have no resource-level scoping.
   statement {
     sid = "AgentAndDescribe"
@@ -204,6 +215,8 @@ data "aws_iam_policy_document" "boundary" {
       "ec2:DescribeInstances",
       "ec2:DescribeTags",
       "ec2:DescribeVolumes",
+      "ec2:DescribeSpotPriceHistory",
+      "ssm:DescribeInstanceInformation",
       "ec2messages:*",
       "ssmmessages:*",
       "ssm:UpdateInstanceInformation",
@@ -367,21 +380,9 @@ data "aws_iam_policy_document" "iam_scoped" {
     }
   }
 
-  # The main stack attaches the client policy to named operator users only.
-  dynamic "statement" {
-    for_each = length(var.client_user_names) > 0 ? [1] : []
-    content {
-      sid       = "AttachClientPolicyToUsers"
-      actions   = ["iam:AttachUserPolicy", "iam:DetachUserPolicy"]
-      resources = [for u in var.client_user_names : "${local.iam_arn}:user/${u}"]
-
-      condition {
-        test     = "ArnEquals"
-        variable = "iam:PolicyARN"
-        values   = ["${local.iam_arn}:policy/qwen-spot-client"]
-      }
-    }
-  }
+  # No user attachments: clients assume the bounded qwen-spot-client role.
+  # Attaching a CI-editable policy to a user (who has no boundary) would let a
+  # policy edit grant that human principal anything.
 
   # ---- explicit denies: CI can never widen its own reach -------------------
 
@@ -623,6 +624,22 @@ data "aws_iam_policy_document" "services" {
 
     condition {
       test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = ["qwen-spot"]
+    }
+  }
+
+  # kms:TagResource above is allowed on "*" so CreateKey can tag the new key.
+  # Without this, CI could tag another stack's key Project=qwen-spot and then
+  # manage it (key policy, decrypt) through KeyManage.
+  statement {
+    sid       = "DenyRetaggingForeignKeys"
+    effect    = "Deny"
+    actions   = ["kms:TagResource", "kms:UntagResource"]
+    resources = ["arn:${local.p}:kms:*:${local.account_id}:key/*"]
+
+    condition {
+      test     = "StringNotEquals"
       variable = "aws:ResourceTag/Project"
       values   = ["qwen-spot"]
     }

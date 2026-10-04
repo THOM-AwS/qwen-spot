@@ -18,3 +18,7 @@ output "uploader_instance_profile_name" {
 output "client_policy_arn" {
   value = aws_iam_policy.client.arn
 }
+
+output "client_role_arn" {
+  value = aws_iam_role.client.arn
+}

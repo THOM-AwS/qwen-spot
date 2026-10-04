@@ -4,7 +4,7 @@ locals {
   kms_usage_principals = concat(
     [module.iam.instance_role_arn],
     module.iam.uploader_role_arns,
-    var.client_principal_arns,
+    [module.iam.client_role_arn],
   )
 
   # EC2 Auto Scaling encrypts launched volumes with this key through its service-linked role.

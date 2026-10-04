@@ -220,7 +220,7 @@ variable "results_retention_days" {
 # --- Access -------------------------------------------------------------------
 
 variable "client_principal_arns" {
-  description = "IAM user/role ARNs allowed to submit requests and read results. Bucket and queue policies deny everyone else."
+  description = "IAM user/role ARNs allowed to assume the qwen-spot-client role. Only that role (plus the worker) can touch the queue and results; bucket and queue policies deny everyone else."
   type        = list(string)
   sensitive   = true
 
@@ -228,18 +228,6 @@ variable "client_principal_arns" {
     condition     = length(var.client_principal_arns) > 0 && alltrue([for a in var.client_principal_arns : can(regex("^arn:aws:iam::[0-9]{12}:(user|role)/[A-Za-z0-9+=,.@_/-]+$", a))])
     error_message = "client_principal_arns must be a non-empty list of IAM user or role ARNs. For an SSO role give the full path: arn:aws:iam::<acct>:role/aws-reserved/sso.amazonaws.com/<region>/AWSReservedSSO_<name>_<suffix>."
   }
-}
-
-variable "client_user_names" {
-  description = "IAM users to attach the client policy to."
-  type        = list(string)
-  default     = []
-}
-
-variable "client_role_names" {
-  description = "IAM roles to attach the client policy to."
-  type        = list(string)
-  default     = []
 }
 
 variable "allowed_cidrs" {

@@ -149,16 +149,29 @@ resource "aws_iam_policy" "client" {
   policy      = data.aws_iam_policy_document.client.json
 }
 
-resource "aws_iam_user_policy_attachment" "client" {
-  for_each = toset(var.client_user_names)
+# Clients assume this role rather than having the policy attached to their user.
+# The role carries the permissions boundary, so a later change to the client
+# policy can never grant a human principal more than the boundary allows.
+data "aws_iam_policy_document" "client_trust" {
+  statement {
+    actions = ["sts:AssumeRole"]
 
-  user       = each.value
-  policy_arn = aws_iam_policy.client.arn
+    principals {
+      type        = "AWS"
+      identifiers = var.client_principal_arns
+    }
+  }
+}
+
+resource "aws_iam_role" "client" {
+  name                 = "${var.name_prefix}-client"
+  description          = "Assumed by qwenq to submit requests, read results, wake the group and tunnel."
+  assume_role_policy   = data.aws_iam_policy_document.client_trust.json
+  permissions_boundary = var.permissions_boundary_arn
+  max_session_duration = 43200
 }
 
 resource "aws_iam_role_policy_attachment" "client" {
-  for_each = toset(var.client_role_names)
-
-  role       = each.value
+  role       = aws_iam_role.client.name
   policy_arn = aws_iam_policy.client.arn
 }

@@ -1,7 +1,6 @@
 # Copy to terraform.tfvars (gitignored). In CI the whole file is the TFVARS secret.
 alert_email           = "you@example.com"
-client_principal_arns = ["arn:aws:iam::123456789012:user/you"]
-client_user_names     = ["you"]
+client_principal_arns = ["arn:aws:iam::123456789012:user/you"]   # may assume the qwen-spot-client role
 
 # Everything below has a default; uncomment to change.
 # region                 = "eu-north-1"

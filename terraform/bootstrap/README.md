@@ -16,17 +16,13 @@ cd terraform/bootstrap
 export AWS_PROFILE=<admin-profile>
 aws sts get-caller-identity                     # confirm the account
 cat > terraform.tfvars <<'TFVARS'               # gitignored
-state_bucket      = "<state bucket from ../backend.hcl>"
-client_user_names = ["<your IAM user>"]
+state_bucket = "<state bucket from ../backend.hcl>"
 TFVARS
 terraform init -backend-config=../backend.hcl
 terraform plan -out tfplan
 terraform apply tfplan
 terraform output -raw role_arn
 ```
-
-`client_user_names` lists the IAM users the main stack may attach the
-`qwen-spot-client` policy to. With it empty, CI cannot attach policies to any user.
 
 Then in GitHub, repo Settings > Environments > `aws`:
 
@@ -72,5 +68,8 @@ No `PowerUserAccess`. Two inline policies:
     bootstrap stack, so CI cannot make a project role trust an outside account.
 
 Remaining risk: inside `region`, CI can still create EC2 resources and launch
-instances with `qwen-spot-*` roles, which the boundary caps. The required-reviewer gate on
+instances with `qwen-spot-*` roles, and it can create a new `qwen-spot-*` role with
+any trust policy (IAM has no condition key on trust content). Both are capped by
+the boundary to qwen-spot resources, so a bad change can reach this project's data
+but nothing else in the account. The required-reviewer gate on
 the `aws` environment is the control for that.

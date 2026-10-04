@@ -51,8 +51,7 @@ module "iam" {
   worker_log_group_arn     = aws_cloudwatch_log_group.worker.arn
   uploader_log_group_arn   = aws_cloudwatch_log_group.uploader.arn
   allowed_cidrs            = var.allowed_cidrs
-  client_user_names        = var.client_user_names
-  client_role_names        = var.client_role_names
+  client_principal_arns    = var.client_principal_arns
   create_uploader          = var.create_uploader
   hf_token_ssm_parameter   = var.hf_token_ssm_parameter
   permissions_boundary_arn = local.permissions_boundary_arn
@@ -67,8 +66,8 @@ module "storage" {
   results_retention_days = var.results_retention_days
   # Deny data-plane access to everyone else. Clients are listed on weights too so
   # the operator can inspect weights; their IAM policy still grants nothing there.
-  weights_allowed_principal_arns = concat([module.iam.instance_role_arn], module.iam.uploader_role_arns, var.client_principal_arns, var.admin_principal_arns)
-  results_allowed_principal_arns = concat([module.iam.instance_role_arn], var.client_principal_arns, var.admin_principal_arns)
+  weights_allowed_principal_arns = concat([module.iam.instance_role_arn], module.iam.uploader_role_arns, [module.iam.client_role_arn], var.admin_principal_arns)
+  results_allowed_principal_arns = concat([module.iam.instance_role_arn, module.iam.client_role_arn], var.admin_principal_arns)
 }
 
 module "queue" {
@@ -78,7 +77,7 @@ module "queue" {
   kms_key_arn                = aws_kms_key.main.arn
   visibility_timeout_seconds = var.visibility_timeout_seconds
   max_receive_count          = var.max_receive_count
-  allowed_principal_arns     = concat([module.iam.instance_role_arn], var.client_principal_arns, var.admin_principal_arns)
+  allowed_principal_arns     = concat([module.iam.instance_role_arn, module.iam.client_role_arn], var.admin_principal_arns)
 }
 
 module "compute" {

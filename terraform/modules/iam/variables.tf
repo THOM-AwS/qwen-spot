@@ -56,12 +56,9 @@ variable "allowed_cidrs" {
   type = list(string)
 }
 
-variable "client_user_names" {
-  type = list(string)
-}
-
-variable "client_role_names" {
-  type = list(string)
+variable "client_principal_arns" {
+  description = "IAM users or roles allowed to assume the client role."
+  type        = list(string)
 }
 
 variable "create_uploader" {

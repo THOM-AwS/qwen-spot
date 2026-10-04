@@ -26,9 +26,9 @@ output "uploader_asg_name" {
   value = var.create_uploader ? local.uploader_asg_name : null
 }
 
-output "client_policy_arn" {
-  description = "Attach to the IAM user or role the qwenq CLI runs as."
-  value       = module.iam.client_policy_arn
+output "client_role_arn" {
+  description = "Role qwenq assumes. Add an AWS profile with role_arn = this and source_profile = your profile."
+  value       = module.iam.client_role_arn
 }
 
 output "kms_key_arn" {
@@ -58,6 +58,7 @@ output "client_config" {
     region         = var.region
     queue_url      = module.queue.queue_url
     dlq_url        = module.queue.dlq_url
+    client_role    = module.iam.client_role_arn
     results_bucket = local.results_bucket
     asg_name       = module.compute.asg_name
     kms_key_arn    = aws_kms_key.main.arn
