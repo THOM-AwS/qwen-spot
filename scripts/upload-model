@@ -13,11 +13,16 @@ writes the .complete marker and sets the group back to 0.
 
 Reads terraform outputs (region, weights_bucket, uploader_asg_name, model_name,
 model_revision); flags override them. Needs AWS_PROFILE set explicitly.
+
+The weights bucket denies object access to everyone but the workload roles, so
+progress is read from the uploader's serial console (it logs JSON events there)
+rather than from S3. Needs ec2:GetConsoleOutput and Auto Scaling access.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -31,23 +36,28 @@ from botocore.exceptions import ClientError
 POLL_S = 30
 
 
-def marker_exists(s3, bucket: str, key: str) -> bool:
+DONE_MESSAGES = {"wrote completion marker", "already uploaded; nothing to do"}
+
+
+def console_events(ec2, instance_id: str) -> list[dict]:
+    """JSON events the uploader printed to the serial console, oldest first."""
     try:
-        s3.head_object(Bucket=bucket, Key=key)
-    except ClientError as exc:
-        if exc.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
-            return False
-        raise
-    return True
-
-
-def prefix_bytes(s3, bucket: str, prefix: str) -> tuple[int, int]:
-    count = size = 0
-    for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix):
-        for obj in page.get("Contents", []):
-            count += 1
-            size += obj["Size"]
-    return count, size
+        raw = ec2.get_console_output(InstanceId=instance_id, Latest=True).get("Output") or ""
+    except ClientError:
+        return []
+    # botocore already base64-decodes GetConsoleOutput.
+    events = []
+    for line in raw.splitlines():
+        start = line.find('{"')
+        if start < 0:
+            continue
+        try:
+            event = json.loads(line[start:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict) and "msg" in event:
+            events.append(event)
+    return events
 
 
 def group_state(autoscaling, name: str) -> str:
@@ -86,29 +96,38 @@ def main() -> int:
     identity = session.client("sts").get_caller_identity()
     print(f"profile {profile} -> account {identity['Account']} ({identity['Arn']})")
 
-    s3 = session.client("s3")
     autoscaling = session.client("autoscaling")
-    prefix = f"models/{model_name}/{revision}/"
-    marker = prefix + ".complete"
+    ec2 = session.client("ec2")
+    target = f"s3://{bucket}/models/{model_name}/{revision}/"
 
-    if marker_exists(s3, bucket, marker):
-        print(f"already uploaded: s3://{bucket}/{marker}")
-        return 0
-
-    confirm(f"Start uploader {asg} in {region} to fetch {model_name}@{revision[:12]}?", args.yes)
+    confirm(f"Start uploader {asg} in {region} to fetch {model_name}@{revision[:12]} into {target}?", args.yes)
     autoscaling.set_desired_capacity(AutoScalingGroupName=asg, DesiredCapacity=1, HonorCooldown=False)
-    print(f"uploader {asg} set to 1; waiting for s3://{bucket}/{marker}")
+    print(f"uploader {asg} set to 1; following its console log")
 
     deadline = time.monotonic() + args.timeout_min * 60
+    seen: set[str] = set()
+    instance_id = None
     try:
         while time.monotonic() < deadline:
-            if marker_exists(s3, bucket, marker):
-                count, size = prefix_bytes(s3, bucket, prefix)
-                print(f"done: {count} objects, {size / 1e9:.1f} GB under s3://{bucket}/{prefix}")
-                return 0
-            count, size = prefix_bytes(s3, bucket, prefix)
-            stamp = time.strftime("%H:%M:%S")
-            print(f"{stamp} {group_state(autoscaling, asg)} uploaded={count} objects {size / 1e9:.1f} GB")
+            groups = autoscaling.describe_auto_scaling_groups(AutoScalingGroupNames=[asg])["AutoScalingGroups"]
+            instances = groups[0]["Instances"] if groups else []
+            if instances:
+                instance_id = instances[0]["InstanceId"]
+            if instance_id:
+                for event in console_events(ec2, instance_id):
+                    key = json.dumps(event, sort_keys=True)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    fields = {k: v for k, v in event.items() if k not in {"ts", "level", "msg"}}
+                    print(f"  [{event.get('level', 'info')}] {event['msg']} {json.dumps(fields) if fields else ''}")
+                    if event["msg"] in DONE_MESSAGES:
+                        print(f"done: {target}")
+                        return 0
+                    if event.get("level") == "error":
+                        print("upload failed on the instance; it scales itself to 0", file=sys.stderr)
+                        return 1
+            print(f"{time.strftime('%H:%M:%S')} {group_state(autoscaling, asg)}")
             time.sleep(POLL_S)
     except KeyboardInterrupt:
         print("interrupted; the uploader keeps running and scales itself to 0 when finished")
@@ -116,7 +135,6 @@ def main() -> int:
 
     print(f"timed out after {args.timeout_min} min; setting {asg} to 0 to stop spend", file=sys.stderr)
     autoscaling.set_desired_capacity(AutoScalingGroupName=asg, DesiredCapacity=0, HonorCooldown=False)
-    print(f"check the uploader logs in CloudWatch for {asg}", file=sys.stderr)
     return 1
 
 
