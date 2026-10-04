@@ -186,6 +186,8 @@ def cmd_session(args: argparse.Namespace) -> int:
         tunnel = session.open_tunnel(command)
         _err(f"tunnel to {ready.instance_id} open; waiting for vLLM (the 27B model takes a few minutes to load)")
         waited = session.wait_for_vllm(args.local_port, tunnel)
+        if not session.serves_model(args.local_port, queue.settings.model_name):
+            raise session.SessionError(f"the endpoint is healthy but does not serve {queue.settings.model_name}")
     except session.SessionError as exc:
         _err(str(exc))
         return EXIT_USAGE
@@ -198,6 +200,7 @@ def cmd_session(args: argparse.Namespace) -> int:
     sys.stdout.flush()
     _err(f"holding the session for up to {args.max_hours:g} h; Ctrl-C to end. The GPU costs money while it is up.")
 
+    session.write_state(args.local_port, tunnel.pid, ready.instance_id)
     deadline = time.monotonic() + args.max_hours * 3600
     restarts = 0
     try:
@@ -209,12 +212,14 @@ def cmd_session(args: argparse.Namespace) -> int:
                 restarts += 1
                 _err(f"tunnel dropped, reopening ({restarts}/5)")
                 tunnel = session.open_tunnel(command)
+                session.write_state(args.local_port, tunnel.pid, ready.instance_id)
             time.sleep(5)
         else:
             _err(f"--max-hours {args.max_hours:g} reached; ending the session")
     except KeyboardInterrupt:
         _err("ending the session")
     finally:
+        session.clear_state()
         tunnel.terminate()
     if args.down:
         queue.set_capacity(0)

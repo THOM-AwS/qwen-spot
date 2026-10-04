@@ -19,7 +19,7 @@ from typing import Any
 import boto3
 
 from qwenq import api, settings
-from qwenq.session import DEFAULT_PORT, tunnel_healthy
+from qwenq.session import DEFAULT_PORT, serves_model, trusted_tunnel
 
 
 def chat(
@@ -39,7 +39,11 @@ def chat(
     if prefer not in {"auto", "tunnel", "queue"}:
         raise ValueError("prefer must be auto, tunnel or queue")
     config = settings.load()
-    use_tunnel = prefer == "tunnel" or (prefer == "auto" and tunnel_healthy(port))
+    # Auto mode only trusts a tunnel a live `qwenq session` opened; an explicit
+    # "tunnel" still requires the endpoint to serve our model.
+    if prefer == "tunnel" and not serves_model(port, config.model_name):
+        raise RuntimeError(f"nothing on localhost:{port} serves {config.model_name}; run `qwenq session`")
+    use_tunnel = prefer == "tunnel" or (prefer == "auto" and trusted_tunnel(port, config.model_name))
     if use_tunnel:
         return _chat_tunnel(messages, params or {}, config.model_name, port, timeout_s)
     queue = api.QwenQueue.from_session(config, boto3.session.Session(profile_name=profile))

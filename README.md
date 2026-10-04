@@ -199,10 +199,14 @@ idle backstop alarm also respects. Once the session ends, the normal 15-minute
 idle scale-in applies.
 
 From Python, `qwenq.client.chat()` uses the tunnel when a session is open and
-the queue otherwise, with the same result shape (plus `via`):
+the queue otherwise, with the same result shape (plus `via`). It only trusts a
+tunnel that a live `qwenq session` opened on that port and that serves the
+configured model, so a prompt never goes to some other local process that happens
+to listen on 8000:
 
 ```python
 from qwenq.client import chat
+
 result = chat([{"role": "user", "content": "Summarise RFC 9110 in one line"}], params={"max_tokens": 128})
 print(result["via"], result["output"])
 ```

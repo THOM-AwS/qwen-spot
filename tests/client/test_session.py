@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -20,7 +21,16 @@ class FakeVllmHandler(BaseHTTPRequestHandler):
     def log_message(self, *_args: Any) -> None:
         pass
 
+    model = "qwen-test"
+
     def do_GET(self) -> None:
+        if self.path == "/v1/models":
+            data = json.dumps({"data": [{"id": self.model}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         self.send_response(200 if self.path == "/health" else 404)
         self.end_headers()
 
@@ -61,6 +71,7 @@ def write_config(aws: Aws, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_chat_prefers_open_tunnel(aws: Aws, fake_tunnel: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     write_config(aws, tmp_path, monkeypatch)
+    session.write_state(fake_tunnel, os.getpid(), "i-1")  # as `qwenq session` does
     result = client.chat([{"role": "user", "content": "hi"}], port=fake_tunnel)
     assert (result["via"], result["status"], result["output"]) == ("tunnel", "ok", "echo hi")
     assert aws.queue_counts() == (0, 0)  # nothing went through SQS
@@ -69,15 +80,56 @@ def test_chat_prefers_open_tunnel(aws: Aws, fake_tunnel: int, tmp_path: Path, mo
 
 def test_chat_falls_back_to_queue(aws: Aws, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     write_config(aws, tmp_path, monkeypatch)
+    queue_result(aws, monkeypatch)
+    result = client.chat([{"role": "user", "content": "hi"}], port=1)  # no tunnel on port 1
+    assert (result["via"], result["output"]) == ("queue", "from queue")
+    assert aws.desired() == 1  # the queue path wakes the GPU
 
+
+def queue_result(aws: Aws, monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_wait(self: api.QwenQueue, request_id: str, **_kw: Any) -> dict[str, Any]:
         put_result(aws, request_id, status="ok", output="from queue")
         return self.get_result(request_id)  # type: ignore[return-value]
 
     monkeypatch.setattr(api.QwenQueue, "wait", fake_wait)
-    result = client.chat([{"role": "user", "content": "hi"}], port=1)  # no tunnel on port 1
-    assert (result["via"], result["output"]) == ("queue", "from queue")
-    assert aws.desired() == 1  # the queue path wakes the GPU
+
+
+def test_listener_without_session_is_not_trusted(
+    aws: Aws, fake_tunnel: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A healthy endpoint on the port is not enough: no session file, so the queue."""
+    write_config(aws, tmp_path, monkeypatch)
+    queue_result(aws, monkeypatch)
+    result = client.chat([{"role": "user", "content": "secret"}], port=fake_tunnel)
+    assert result["via"] == "queue"
+
+
+def test_dead_session_is_not_trusted(
+    aws: Aws, fake_tunnel: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_config(aws, tmp_path, monkeypatch)
+    queue_result(aws, monkeypatch)
+    session.write_state(fake_tunnel, 2**22 + 12345, "i-1")  # no such pid
+    assert client.chat([{"role": "user", "content": "x"}], port=fake_tunnel)["via"] == "queue"
+
+
+def test_wrong_model_is_not_trusted(
+    aws: Aws, fake_tunnel: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_config(aws, tmp_path, monkeypatch)
+    session.write_state(fake_tunnel, os.getpid(), "i-1")
+    monkeypatch.setattr(FakeVllmHandler, "model", "someone-elses-model")
+    assert session.trusted_tunnel(fake_tunnel, "qwen-test") is False
+    with pytest.raises(RuntimeError):
+        client.chat([{"role": "user", "content": "x"}], prefer="tunnel", port=fake_tunnel)
+
+
+def test_clear_state(aws: Aws, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    write_config(aws, tmp_path, monkeypatch)
+    path = session.write_state(8000, os.getpid(), "i-1")
+    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    session.clear_state()
+    assert not path.exists()
 
 
 @pytest.mark.unit

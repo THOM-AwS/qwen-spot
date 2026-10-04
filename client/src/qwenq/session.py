@@ -16,7 +16,9 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
+from qwenq import settings
 from qwenq.api import QwenQueue
 
 DEFAULT_PORT = 8000
@@ -25,6 +27,57 @@ VLLM_PORT = 8000
 
 class SessionError(RuntimeError):
     pass
+
+
+def state_path() -> Path:
+    return settings.path().with_name("session.json")
+
+
+def write_state(port: int, tunnel_pid: int, instance_id: str) -> Path:
+    """Record the open session so chat() only trusts a tunnel we opened."""
+    path = state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"port": port, "pid": tunnel_pid, "instance_id": instance_id}))
+    path.chmod(0o600)
+    return path
+
+
+def clear_state() -> None:
+    state_path().unlink(missing_ok=True)
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def serves_model(port: int, model: str, timeout_s: float = 2.0) -> bool:
+    """True when the endpoint on localhost:port is vLLM serving our model."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=timeout_s) as response:  # nosec B310 - fixed localhost URL
+            models = json.loads(response.read()).get("data", [])
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+    return any(isinstance(m, dict) and m.get("id") == model for m in models)
+
+
+def trusted_tunnel(port: int, model: str) -> bool:
+    """Use the tunnel only if a live `qwenq session` opened it on this port and
+    the endpoint serves our model. Otherwise any local process listening on
+    the port (an unrelated dev server, a stale forward) would get the prompt.
+    """
+    try:
+        state = json.loads(state_path().read_text())
+    except (OSError, ValueError):
+        return False
+    if state.get("port") != port or not _pid_alive(int(state.get("pid", 0))):
+        return False
+    return serves_model(port, model)
 
 
 def tunnel_healthy(port: int = DEFAULT_PORT, timeout_s: float = 2.0) -> bool:
