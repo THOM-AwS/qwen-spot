@@ -509,6 +509,7 @@ data "aws_iam_policy_document" "services" {
       "ec2:AssociateIamInstanceProfile",
       "ec2:ReplaceIamInstanceProfileAssociation",
       "ec2:GetPasswordData",
+      "ec2:DescribeInstanceAttribute",
       "ec2:CreateSnapshot",
       "ec2:CreateSnapshots",
       "ec2:CopySnapshot",
@@ -866,6 +867,13 @@ data "aws_iam_policy_document" "plan_read" {
     resources = ["arn:${local.p}:sns:*:${local.account_id}:qwen-spot-*"]
   }
 
+  # Subscription ARNs are <topic ARN>:<id>, so this covers only project topics.
+  statement {
+    sid       = "ProjectSubscriptions"
+    actions   = ["sns:GetSubscriptionAttributes"]
+    resources = ["arn:${local.p}:sns:*:${local.account_id}:qwen-spot-*:*"]
+  }
+
   statement {
     sid       = "ProjectKeys"
     actions   = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
@@ -909,9 +917,17 @@ data "aws_iam_policy_document" "plan_read" {
       "kms:ListAliases",
       "logs:DescribeLogGroups",
       "cloudwatch:DescribeAlarms",
-      "sns:GetSubscriptionAttributes",
       "iam:GetOpenIDConnectProvider",
     ]
+    resources = ["*"]
+  }
+
+  # ec2:Describe* includes reading any instance's user data, which often holds
+  # secrets for other workloads. Terraform does not need it for this stack.
+  statement {
+    sid       = "DenyInstanceUserData"
+    effect    = "Deny"
+    actions   = ["ec2:DescribeInstanceAttribute"]
     resources = ["*"]
   }
 
