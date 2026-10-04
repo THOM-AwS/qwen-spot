@@ -64,7 +64,7 @@ measured yet.
   one variable away.
 - **Encryption** uses one customer-managed KMS key (rotation on) for both buckets,
   both queues, the SNS topic, the log groups and the EBS volumes. That adds 1 USD a month to the idle cost.
-- **Model upload** runs on an on-demand `m6id.2xlarge` in its own Auto Scaling
+- **Model upload** runs on an on-demand `m5d.2xlarge` in its own Auto Scaling
   group at desired 0, instead of an ad-hoc instance. `scripts/upload-model` sets
   that group to 1; the instance uploads, writes `.complete`, and sets the group
   back to 0. It is all in Terraform and leaves nothing behind.
@@ -112,7 +112,7 @@ aws sts get-caller-identity                 # confirm the account before anythin
 cd packer && packer init . && packer build -only='qwen-spot.amazon-ebs.gpu' . && cd ..
 #    then run the terraform workflow again so the launch template picks up the AMI
 
-# 2. weights (about 0.50 USD on-demand m6id.2xlarge, 15 to 30 min)
+# 2. weights (about 0.50 USD on-demand m5d.2xlarge, 15 to 30 min)
 scripts/upload-model
 
 # 3. client

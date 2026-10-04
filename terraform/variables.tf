@@ -277,7 +277,7 @@ variable "create_uploader" {
 variable "uploader_instance_type" {
   description = "On-demand uploader instance type. Needs instance-store NVMe for the download staging area."
   type        = string
-  default     = "m6id.2xlarge"
+  default     = "m5d.2xlarge"
 }
 
 variable "hf_token_ssm_parameter" {

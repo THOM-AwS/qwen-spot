@@ -1,6 +1,29 @@
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
+# Every configured instance type must exist in the region. EC2 Auto Scaling does
+# not reject an unoffered type up front; it just fails each launch, which looks
+# like an empty queue that never drains.
+locals {
+  wanted_instance_types = distinct(concat(var.instance_types, var.create_uploader ? [var.uploader_instance_type] : []))
+}
+
+data "aws_ec2_instance_type_offerings" "available" {
+  location_type = "region"
+
+  filter {
+    name   = "instance-type"
+    values = local.wanted_instance_types
+  }
+
+  lifecycle {
+    postcondition {
+      condition     = length(setsubtract(local.wanted_instance_types, self.instance_types)) == 0
+      error_message = "Instance types not offered in ${var.region}: ${join(", ", setsubtract(local.wanted_instance_types, self.instance_types))}."
+    }
+  }
+}
+
 resource "random_id" "suffix" {
   byte_length = 4
 }
@@ -99,7 +122,7 @@ module "compute" {
   uploader_asg_name         = local.uploader_asg_name
   engine                    = var.engine
   ami_id                    = var.ami_id
-  instance_types            = var.instance_types
+  instance_types            = [for t in var.instance_types : t if contains(data.aws_ec2_instance_type_offerings.available.instance_types, t)]
   spot_max_price            = var.spot_max_price
   max_instances             = var.max_instances
   root_volume_size_gb       = var.root_volume_size_gb
