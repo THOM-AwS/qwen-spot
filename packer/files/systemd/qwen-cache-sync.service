@@ -1,0 +1,23 @@
+[Unit]
+Description=qwen-spot: upload the vLLM compile cache once
+ConditionPathExists=/etc/qwen-spot/config.env
+After=vllm.service
+
+[Service]
+Type=oneshot
+User=qwen
+Group=qwen
+EnvironmentFile=/etc/qwen-spot/config.env
+ExecStartPre=/opt/qwen-spot/bin/wait-vllm-health.sh
+ExecStart=/opt/qwen-spot/bin/cache-sync.sh
+TimeoutStartSec=2400
+# Hardening. No PrivateDevices or DevicePolicy: vLLM needs /dev/nvidia*.
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+StandardOutput=append:/var/log/qwen-spot/cache-sync.log
+StandardError=inherit

@@ -1,0 +1,55 @@
+#!/bin/bash
+# One-shot model upload. Scales its own group to 0 on exit, success or failure.
+set -euo pipefail
+exec > >(tee -a /var/log/qwen-uploader.log | logger -t qwen-uploader -s 2>/dev/console) 2>&1
+
+install -d -m 0755 /etc/qwen-spot /opt/qwen-spot
+# Values are single-quoted for bash (the file is sourced below), with embedded
+# single quotes escaped. The heredoc delimiter is derived from the content, so a
+# value cannot contain it. Terraform also validates every user-supplied value.
+cat > /etc/qwen-spot/uploader.env <<'QWEN_ENV_${substr(sha256(jsonencode(config)), 0, 16)}'
+%{ for k, v in config ~}
+${k}='${replace(v, "'", "'\\''")}'
+%{ endfor ~}
+QWEN_ENV_${substr(sha256(jsonencode(config)), 0, 16)}
+set -a
+. /etc/qwen-spot/uploader.env
+set +a
+
+scale_to_zero() {
+  rc=$?
+  echo "uploader exiting rc=$rc, scaling ${asg_name} to 0"
+  for _ in 1 2 3 4 5; do
+    if /opt/qwen-spot/uv/uv run --no-project --exclude-newer 2026-10-04T00:00:00Z --with 'boto3==1.43.108' python3 -c \
+      "import boto3; boto3.client('autoscaling', region_name='${region}').set_desired_capacity(AutoScalingGroupName='${asg_name}', DesiredCapacity=0, HonorCooldown=False)"; then
+      exit "$rc"
+    fi
+    sleep 10
+  done
+  # Last resort: shutdown terminates the instance, but the ASG (still at 1)
+  # would relaunch it. Only reachable if uv itself never installed.
+  shutdown -h now
+}
+trap scale_to_zero EXIT
+
+# Stage downloads on the instance-store NVMe.
+dev=$(lsblk -dno NAME,MODEL | awk '/Instance Storage/ {print "/dev/"$1; exit}')
+install -d "$QWEN_WORK_DIR"
+if [ -n "$dev" ]; then
+  mkfs.xfs -f "$dev"
+  mount "$dev" "$QWEN_WORK_DIR"
+fi
+
+# uv, pinned and checksum-verified.
+cd /tmp
+curl -fsSL --retry 8 --retry-all-errors --retry-delay 15 -o uv.tar.gz "https://github.com/astral-sh/uv/releases/download/${uv_version}/uv-x86_64-unknown-linux-gnu.tar.gz"
+echo "${uv_sha256}  uv.tar.gz" | sha256sum -c -
+install -d /opt/qwen-spot/uv
+tar -xzf uv.tar.gz -C /opt/qwen-spot/uv --strip-components=1
+export UV_CACHE_DIR="$QWEN_WORK_DIR/uv-cache" HOME=/root
+
+cat > /opt/qwen-spot/upload_model.py <<'QWEN_PY_${substr(sha256(upload_script), 0, 16)}'
+${upload_script}
+QWEN_PY_${substr(sha256(upload_script), 0, 16)}
+
+timeout 4h /opt/qwen-spot/uv/uv run --script /opt/qwen-spot/upload_model.py

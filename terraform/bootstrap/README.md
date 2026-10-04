@@ -1,0 +1,76 @@
+# Bootstrap: GitHub Actions role
+
+Creates `qwen-spot-github-actions`, the role `.github/workflows/terraform.yml`
+assumes through the account's existing GitHub OIDC provider
+(`token.actions.githubusercontent.com`; create one first if the account has none).
+The trust is pinned to the repo's immutable OIDC subject plus the `aws` environment,
+so only jobs running in that environment can assume it, and a renamed or
+re-registered repo name cannot take it over. For a fork, set `github_sub_prefix`
+from `gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix`.
+
+CI cannot create the role it runs as, so a human applies this stack once with
+admin credentials:
+
+```bash
+cd terraform/bootstrap
+export AWS_PROFILE=<admin-profile>
+aws sts get-caller-identity                     # confirm the account
+cat > terraform.tfvars <<'TFVARS'               # gitignored
+state_bucket      = "<state bucket from ../backend.hcl>"
+client_user_names = ["<your IAM user>"]
+TFVARS
+terraform init -backend-config=../backend.hcl
+terraform plan -out tfplan
+terraform apply tfplan
+terraform output -raw role_arn
+```
+
+`client_user_names` lists the IAM users the main stack may attach the
+`qwen-spot-client` policy to. With it empty, CI cannot attach policies to any user.
+
+Then in GitHub, repo Settings > Environments > `aws`:
+
+1. Add a **required reviewer**. Each job (plan, then apply) waits for approval
+   separately. Approve apply only after reading the plan job's
+   summary: apply re-plans and stops if the summary differs.
+2. **Deployment branches: `main` only.** The OIDC trust pins the environment,
+   not the branch, so this setting is what stops a dispatched feature branch
+   from assuming the role. The workflow also checks `github.ref`.
+3. Secrets (not variables, so they are masked in public logs):
+   `AWS_ROLE_ARN` = the `role_arn` output, `TF_STATE_BUCKET` and `TF_STATE_REGION`
+   = the values in `backend.hcl`, `TFVARS` = the full contents of
+   `terraform/terraform.tfvars`.
+
+## What the role can do
+
+No `PowerUserAccess`. Two inline policies:
+
+- `qwen-spot-services`: EC2 and Auto Scaling, only in `region`. Changing,
+  stopping or deleting an existing EC2 or Auto Scaling resource requires the tag
+  `Project=qwen-spot`, and tagging an existing resource requires that tag already,
+  so the guard cannot be sidestepped by re-tagging. Copying, sharing or exporting
+  snapshots and images, and swapping instance profiles, are denied outright.
+  SQS, SNS, S3, logs, CloudWatch alarms and budgets are limited to `qwen-spot-*`
+  names. KMS is limited to keys tagged `Project=qwen-spot`. It can read public SSM
+  parameters. `sts:AssumeRole`, `organizations:*`, `account:*`, `sso:*`,
+  `sso-directory:*` and `identitystore:*` are explicitly denied, so the role cannot
+  hop into member accounts or touch Identity Center.
+- `qwen-spot-iam-scoped`: named IAM actions on `qwen-spot-*` roles, policies
+  and instance profiles only.
+  - New roles must carry the `qwen-spot-boundary` permissions boundary (this
+    stack creates it). The boundary caps any qwen-spot role at the actions the
+    worker and uploader use, on `qwen-spot-*` buckets, queues, groups, log
+    groups and `/qwen-spot/*` parameters, and keys tagged `Project=qwen-spot`.
+    It denies all of IAM, Organizations and `sts:AssumeRole`. No project role can
+    read another stack's bucket or state.
+  - Attach and detach are limited to `qwen-spot-*` policies plus
+    `AmazonSSMManagedInstanceCore`.
+  - `iam:PassRole` is only to `ec2.amazonaws.com`.
+  - Explicit denies: any IAM write to the CI role itself, any edit to the
+    boundary policy, removing a permissions boundary, and any trust policy
+    change (`iam:UpdateAssumeRolePolicy`). Trust changes go through this
+    bootstrap stack, so CI cannot make a project role trust an outside account.
+
+Remaining risk: inside `region`, CI can still create EC2 resources and launch
+instances with `qwen-spot-*` roles, which the boundary caps. The required-reviewer gate on
+the `aws` environment is the control for that.

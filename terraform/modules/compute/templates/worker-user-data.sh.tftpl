@@ -1,0 +1,12 @@
+#!/bin/bash
+# Writes config and starts units. Every install lives in the AMI.
+set -euo pipefail
+install -d -m 0755 /etc/qwen-spot
+umask 022
+cat > /etc/qwen-spot/config.env <<'QWEN_CONFIG_EOF'
+%{ for k, v in config ~}
+${k}="${replace(replace(v, "\\", "\\\\"), "\"", "\\\"")}"
+%{ endfor ~}
+QWEN_CONFIG_EOF
+systemctl daemon-reload
+systemctl start qwen-nvme.service qwen-cwagent.service vllm.service qwen-worker.service

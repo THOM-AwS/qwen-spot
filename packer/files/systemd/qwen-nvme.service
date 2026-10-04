@@ -1,0 +1,15 @@
+[Unit]
+Description=qwen-spot: mount instance-store NVMe
+ConditionPathExists=/etc/qwen-spot/config.env
+After=local-fs.target cloud-init.service
+Before=vllm.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/qwen-spot/bin/mount-nvme.sh
+StandardOutput=append:/var/log/qwen-spot/nvme.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

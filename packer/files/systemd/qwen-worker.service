@@ -1,0 +1,31 @@
+[Unit]
+Description=qwen-spot: SQS worker
+ConditionPathExists=/etc/qwen-spot/config.env
+After=network-online.target vllm.service
+Wants=network-online.target vllm.service qwen-cache-sync.service
+
+[Service]
+Type=simple
+User=qwen
+Group=qwen
+EnvironmentFile=/etc/qwen-spot/config.env
+ExecStartPre=/opt/qwen-spot/bin/wait-vllm-health.sh
+ExecStart=/opt/qwen-spot/worker-venv/bin/qwen-worker
+Restart=always
+RestartSec=5
+TimeoutStartSec=1900
+# Give in-flight jobs time to hand their messages back on SIGTERM.
+TimeoutStopSec=60
+# Hardening. No PrivateDevices or DevicePolicy: vLLM needs /dev/nvidia*.
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+StandardOutput=append:/var/log/qwen-spot/worker.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

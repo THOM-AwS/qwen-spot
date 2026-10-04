@@ -1,0 +1,29 @@
+# Copy to terraform.tfvars (gitignored). In CI the whole file is the TFVARS secret.
+alert_email           = "you@example.com"
+client_principal_arns = ["arn:aws:iam::123456789012:user/you"]
+client_user_names     = ["you"]
+
+# Everything below has a default; uncomment to change.
+# region                 = "eu-north-1"
+# instance_types         = ["p5.4xlarge"]
+# spot_max_price         = 3.00
+# engine                 = "gpu"   # "cpu" plus instance_types = ["c7i.2xlarge"] for the cheap end-to-end test
+# model_repo             = "huihui-ai/Huihui-Qwen3.6-27B-abliterated"
+# model_revision         = "27502c8717fd5a2f8c0c77188c10c243fd4f672e"
+# model_name             = "qwen3.6-27b-abliterated"
+# weight_load_mode       = "stream"
+# idle_minutes           = 5
+# max_uptime_hours       = 4
+# monthly_budget_usd     = 50
+# allowed_cidrs          = []
+
+# Cheap end-to-end test (build order step 3): CPU spot instance, tiny model.
+# Build the cpu AMI first: packer build -only='qwen-spot.amazon-ebs.cpu' packer
+# engine           = "cpu"
+# instance_types   = ["c7i.2xlarge", "c6i.2xlarge", "m7i.2xlarge"]
+# spot_max_price   = 0.50
+# model_repo       = "Qwen/Qwen3-0.6B"
+# model_revision   = "c1899de289a04d12100db370d81485cdf75e47ca"
+# model_name       = "qwen3-0.6b"
+# weight_load_mode = "copy"
+# max_model_len    = 4096

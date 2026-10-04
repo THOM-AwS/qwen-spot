@@ -1,0 +1,14 @@
+[Unit]
+Description=qwen-spot: configure and start the CloudWatch agent
+ConditionPathExists=/etc/qwen-spot/config.env
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/qwen-spot/config.env
+ExecStart=/opt/qwen-spot/bin/cwagent-start.sh
+
+[Install]
+WantedBy=multi-user.target

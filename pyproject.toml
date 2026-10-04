@@ -1,0 +1,60 @@
+[project]
+name = "qwen-spot"
+version = "0.1.0"
+description = "Development workspace for the qwen-spot worker and client"
+requires-python = ">=3.12"
+license = "0BSD"
+dependencies = ["qwen-worker", "qwenq"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "moto[s3,sqs,autoscaling,ec2]>=5.1",
+    "ruff>=0.9",
+    "mypy>=1.15",
+    "boto3-stubs[s3,sqs,autoscaling,ec2]>=1.40",
+    "bandit>=1.8",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["worker", "client"]
+
+[tool.uv.sources]
+qwen-worker = { workspace = true }
+qwenq = { workspace = true }
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+ignore = ["S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["qwen_worker", "qwenq", "tests"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S108"]
+"client/src/qwenq/cli.py" = ["S606"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "unit: fast tests with no AWS",
+    "integration: tests against moto-mocked AWS",
+]
+addopts = "-ra"
+
+[tool.coverage.run]
+source = ["worker/src/qwen_worker", "client/src/qwenq"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+ignore_missing_imports = true
+check_untyped_defs = true

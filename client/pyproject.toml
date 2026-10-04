@@ -1,0 +1,19 @@
+[project]
+name = "qwenq"
+version = "0.1.0"
+description = "CLI for the qwen-spot queue: submit prompts, wait for results, wake and stop the GPU"
+requires-python = ">=3.12"
+license = "0BSD"
+dependencies = [
+    "boto3>=1.40,<2",
+]
+
+[project.scripts]
+qwenq = "qwenq.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qwenq"]

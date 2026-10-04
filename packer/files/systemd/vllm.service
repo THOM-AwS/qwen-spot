@@ -1,0 +1,31 @@
+[Unit]
+Description=qwen-spot: vLLM OpenAI-compatible server on 127.0.0.1:8000
+ConditionPathExists=/etc/qwen-spot/config.env
+After=network-online.target qwen-nvme.service
+Wants=network-online.target
+Requires=qwen-nvme.service
+
+[Service]
+Type=simple
+User=qwen
+Group=qwen
+EnvironmentFile=/etc/qwen-spot/config.env
+ExecStart=/opt/qwen-spot/bin/vllm-start.sh
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=60
+LimitNOFILE=1048576
+LimitMEMLOCK=infinity
+# Hardening. No PrivateDevices or DevicePolicy: vLLM needs /dev/nvidia*.
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+StandardOutput=append:/var/log/qwen-spot/vllm.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

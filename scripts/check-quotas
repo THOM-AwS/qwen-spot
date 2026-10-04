@@ -1,0 +1,95 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["boto3==1.43.108"]
+# [tool.uv]
+# exclude-newer = "2026-10-04T00:00:00Z"
+# ///
+"""Report spot vCPU quotas for the P and G families and whether they fit the instances.
+
+Read-only. Quotas are looked up by name, never by quota code. Exits 1 when a
+quota is below what max_instances x vCPUs needs, so it can gate a deploy.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import boto3
+from _common import terraform_outputs
+
+QUOTA_NAMES = {
+    "P": "All P Spot Instance Requests",
+    "G": "All G and VT Spot Instance Requests",
+}
+
+
+def family_of(instance_type: str) -> str:
+    prefix = instance_type.split(".", 1)[0]
+    return "G" if prefix.startswith(("g", "vt")) else prefix[0].upper()
+
+
+def quotas_by_name(session: boto3.Session, region: str) -> dict[str, float]:
+    client = session.client("service-quotas", region_name=region)
+    found: dict[str, float] = {}
+    for page in client.get_paginator("list_service_quotas").paginate(ServiceCode="ec2"):
+        for quota in page["Quotas"]:
+            if quota["QuotaName"] in QUOTA_NAMES.values():
+                found[quota["QuotaName"]] = quota["Value"]
+    # Quotas never changed from the default may only appear in the defaults listing.
+    missing = set(QUOTA_NAMES.values()) - found.keys()
+    if missing:
+        for page in client.get_paginator("list_aws_default_service_quotas").paginate(ServiceCode="ec2"):
+            for quota in page["Quotas"]:
+                if quota["QuotaName"] in missing:
+                    found[quota["QuotaName"]] = quota["Value"]
+    return found
+
+
+def main() -> int:
+    outputs = terraform_outputs()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--region", default=outputs.get("region") or "eu-north-1")
+    parser.add_argument("--types", nargs="+", default=outputs.get("instance_types") or ["p5.4xlarge"])
+    parser.add_argument(
+        "--count", type=int, default=int(outputs.get("max_instances") or 1), help="instances needed at once"
+    )
+    args = parser.parse_args()
+
+    session = boto3.Session()
+    ec2 = session.client("ec2", region_name=args.region)
+    vcpus = {
+        t["InstanceType"]: t["VCpuInfo"]["DefaultVCpus"]
+        for t in ec2.describe_instance_types(InstanceTypes=args.types)["InstanceTypes"]
+    }
+    quotas = quotas_by_name(session, args.region)
+    account = session.client("sts").get_caller_identity()["Account"]
+
+    print(f"account {account}, region {args.region}")
+    for family, name in QUOTA_NAMES.items():
+        value = quotas.get(name)
+        print(f"  {name}: {'not found' if value is None else f'{value:g} vCPUs'}  (family {family})")
+
+    ok = True
+    for instance_type in args.types:
+        family = family_of(instance_type)
+        name = QUOTA_NAMES.get(family)
+        need = vcpus[instance_type] * args.count
+        if name is None:
+            print(f"  {instance_type}: family {family} not covered by this check")
+            continue
+        have = quotas.get(name, 0.0)
+        verdict = "OK" if have >= need else "INSUFFICIENT"
+        ok = ok and have >= need
+        print(f"  {instance_type}: needs {need} vCPUs ({vcpus[instance_type]} x {args.count}) -> {verdict}")
+    if not ok:
+        print(f"request an increase of the quota above in {args.region} (Service Quotas console)")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

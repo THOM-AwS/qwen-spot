@@ -1,0 +1,124 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["boto3==1.43.108"]
+# [tool.uv]
+# exclude-newer = "2026-10-04T00:00:00Z"
+# ///
+"""Run the model upload on the uploader instance and wait for it to finish.
+
+Sets the uploader Auto Scaling group to 1. The instance downloads the pinned
+model from Hugging Face inside the region, copies it to the weights bucket,
+writes the .complete marker and sets the group back to 0.
+
+Reads terraform outputs (region, weights_bucket, uploader_asg_name, model_name,
+model_revision); flags override them. Needs AWS_PROFILE set explicitly.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import boto3
+from _common import confirm, require_profile, terraform_outputs
+from botocore.exceptions import ClientError
+
+POLL_S = 30
+
+
+def marker_exists(s3, bucket: str, key: str) -> bool:
+    try:
+        s3.head_object(Bucket=bucket, Key=key)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
+            return False
+        raise
+    return True
+
+
+def prefix_bytes(s3, bucket: str, prefix: str) -> tuple[int, int]:
+    count = size = 0
+    for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            count += 1
+            size += obj["Size"]
+    return count, size
+
+
+def group_state(autoscaling, name: str) -> str:
+    groups = autoscaling.describe_auto_scaling_groups(AutoScalingGroupNames=[name])["AutoScalingGroups"]
+    if not groups:
+        sys.exit(f"error: Auto Scaling group {name} not found")
+    group = groups[0]
+    instances = ", ".join(f"{i['InstanceId']}:{i['LifecycleState']}" for i in group["Instances"]) or "none"
+    return f"desired={group['DesiredCapacity']} instances={instances}"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--region")
+    parser.add_argument("--bucket")
+    parser.add_argument("--asg")
+    parser.add_argument("--model-name")
+    parser.add_argument("--revision")
+    parser.add_argument("--timeout-min", type=int, default=90)
+    parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    args = parser.parse_args()
+
+    profile = require_profile()
+    outputs = terraform_outputs()
+    region = args.region or outputs.get("region")
+    bucket = args.bucket or outputs.get("weights_bucket")
+    asg = args.asg or outputs.get("uploader_asg_name")
+    model_name = args.model_name or outputs.get("model_name")
+    revision = args.revision or outputs.get("model_revision")
+    required = {"region": region, "bucket": bucket, "asg": asg, "model-name": model_name, "revision": revision}
+    missing = [name for name, value in required.items() if not value]
+    if missing:
+        sys.exit(f"error: missing {', '.join(missing)} (no terraform outputs; pass the flags)")
+
+    session = boto3.Session(profile_name=profile, region_name=region)
+    identity = session.client("sts").get_caller_identity()
+    print(f"profile {profile} -> account {identity['Account']} ({identity['Arn']})")
+
+    s3 = session.client("s3")
+    autoscaling = session.client("autoscaling")
+    prefix = f"models/{model_name}/{revision}/"
+    marker = prefix + ".complete"
+
+    if marker_exists(s3, bucket, marker):
+        print(f"already uploaded: s3://{bucket}/{marker}")
+        return 0
+
+    confirm(f"Start uploader {asg} in {region} to fetch {model_name}@{revision[:12]}?", args.yes)
+    autoscaling.set_desired_capacity(AutoScalingGroupName=asg, DesiredCapacity=1, HonorCooldown=False)
+    print(f"uploader {asg} set to 1; waiting for s3://{bucket}/{marker}")
+
+    deadline = time.monotonic() + args.timeout_min * 60
+    try:
+        while time.monotonic() < deadline:
+            if marker_exists(s3, bucket, marker):
+                count, size = prefix_bytes(s3, bucket, prefix)
+                print(f"done: {count} objects, {size / 1e9:.1f} GB under s3://{bucket}/{prefix}")
+                return 0
+            count, size = prefix_bytes(s3, bucket, prefix)
+            stamp = time.strftime("%H:%M:%S")
+            print(f"{stamp} {group_state(autoscaling, asg)} uploaded={count} objects {size / 1e9:.1f} GB")
+            time.sleep(POLL_S)
+    except KeyboardInterrupt:
+        print("interrupted; the uploader keeps running and scales itself to 0 when finished")
+        return 130
+
+    print(f"timed out after {args.timeout_min} min; setting {asg} to 0 to stop spend", file=sys.stderr)
+    autoscaling.set_desired_capacity(AutoScalingGroupName=asg, DesiredCapacity=0, HonorCooldown=False)
+    print(f"check the uploader logs in CloudWatch for {asg}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
