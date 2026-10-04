@@ -21,9 +21,9 @@ case "$ENGINE" in
     : "${VLLM_CPU_WHEEL_SHA256:?}"
     # Runtime libraries the CPU wheel expects (see docker/Dockerfile.cpu): tcmalloc
     # and libiomp5 are preloaded at start, libnuma backs thread binding, and g++
-    # is the compiler torch.compile uses for CPU kernels.
+    # plus the Python headers are what torch.compile needs to build CPU kernels.
     DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
-      libtcmalloc-minimal4 libnuma1 numactl g++
+      libtcmalloc-minimal4 libnuma1 numactl g++ python3.12-dev
     wheel="vllm-${VLLM_VERSION}+cpu-cp38-abi3-manylinux_2_39_x86_64.whl"
     work=$(mktemp -d)
     curl -fsSL -o "$work/$wheel" \
