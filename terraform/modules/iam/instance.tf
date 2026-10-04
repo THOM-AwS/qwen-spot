@@ -50,10 +50,26 @@ data "aws_iam_policy_document" "instance" {
     resources = ["${var.weights_bucket_arn}/cache/*"]
   }
 
+  # The worker reads its own earlier result (duplicate delivery, attempt count)
+  # before writing a new one.
   statement {
-    sid       = "WriteResults"
-    actions   = ["s3:PutObject"]
+    sid       = "ReadWriteResults"
+    actions   = ["s3:GetObject", "s3:PutObject"]
     resources = ["${var.results_bucket_arn}/results/*"]
+  }
+
+  # Without ListBucket, S3 answers a GET for a missing key with AccessDenied
+  # instead of 404, so the first lookup for every new request failed.
+  statement {
+    sid       = "ListResults"
+    actions   = ["s3:ListBucket"]
+    resources = [var.results_bucket_arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["results/*", "requests/*"]
+    }
   }
 
   statement {
