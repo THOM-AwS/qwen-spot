@@ -31,37 +31,37 @@ Weights are streamed from S3 into GPU memory with vLLM's Run:ai streamer
 | 1. Repo, Terraform modules, CI | done. Plan runs on every push with a read-only role; apply is manual and gated |
 | 2. Worker and client, tested against moto and a fake vLLM | done; 65 tests, 87% coverage |
 | Infrastructure | applied in eu-north-1; refreshed plan shows no drift |
-| 3. End-to-end on a CPU spot instance with Qwen3-0.6B | in progress, see below |
+| 3. End-to-end on a CPU spot instance with Qwen3-0.6B | passed except the price-cap test (deferred), see below |
 | 4. Packer GPU AMI, 27B model upload, first H100 run | not started |
 | 5. Alarms, budget, interruption handling | deployed; not yet exercised end to end |
 
-End-to-end run so far:
+CPU end-to-end results (spot c6i/c7i.2xlarge, Qwen3-0.6B, 2026-10-04):
 
-- The model upload works (Qwen3-0.6B, about 30 s on the uploader).
-- Cold path: `qwenq ask` woke the group, and a spot c7i.2xlarge was InService in about
-  25 s. Units started in order, weights copied from S3 in 6 s, and the worker waited
-  on vLLM health.
-- vLLM then crashed at import (`torchvision::nms does not exist`): the CPU image
-  paired torch `2.13.0+cpu` with a PyPI torchvision. Fixed in `install-vllm.sh`, and
-  the build now imports vLLM. The rebuilt AMI `qwen-spot-cpu-20261004081641` passed
-  that check but has not booted a worker yet.
+| Acceptance test | Result |
+|---|---|
+| Cold path (`qwenq ask` at capacity 0) | pass: 163 s submit to answer (InService ~20 s, vLLM ready ~2.3 min, generate 2 s) |
+| Alarm backstop (no client wake) | pass: worker InService ~90 s after the scale-out alarm's actions were enabled |
+| Warm path | pass: 4 s end to end, same instance |
+| Idle scale-in | pass: capacity 0 at 15 min 34 s after the last request, instance gone at 16 min 20 s; idle backstop alarm stayed OK |
+| Interruption (worker killed 7 s into a 1,500-token job) | pass: replacement finished it (1,419 tokens, 81 s), `attempt: 1`, released at once rather than after the visibility timeout |
+| Privacy | pass: an AdministratorAccess user is denied SQS send/receive/purge and S3 get/list/put on both buckets; worker SG has 0 ingress; both buckets block public access |
+| Price cap | not run (deferred) |
 
-To resume:
+Bugs the run found and fixed: CPU image dependencies (torchvision, torchcodec, OpenMP
+preload, Python headers; the AMI build now smoke-tests `vllm serve`), the worker role
+missing read/list on `results/` (S3 returns AccessDenied, not 404, without list), the
+uploader on an instance type not offered in eu-north-1, `tf-quiet.sh` reporting
+failures as success, and `qwenq wait` re-waking a group that had been set to 0.
 
-1. **Re-enable the scale-out alarm.** It was disabled by hand to stop spend (see
-   "Manual changes outstanding" below). The next apply turns it back on: `actions_enabled`
-   defaults to true, so Terraform sees the drift.
-2. **Apply**, so the worker launch template picks up the rebuilt AMI.
-3. **Re-run the cold, warm, idle and interruption tests.** One test request is still
-   queued and will be served first.
-4. **Deregister the broken AMI** `qwen-spot-cpu-20261004065936` and its snapshot.
+Next: build the GPU AMI, switch `TFVARS` to the H100 profile (`engine = "gpu"`,
+`p5.4xlarge`, the 27B model), apply, run `scripts/upload-model`, then repeat the tests.
 
-### Manual changes outstanding
+### Manual changes (all resolved)
 
 | When (UTC) | Change | Why | Undo |
 |---|---|---|---|
-| 2026-10-04 08:20 | `aws cloudwatch disable-alarm-actions --alarm-names qwen-spot-scale-out` | A queued test request kept waking a worker on the broken AMI, which never becomes healthy and so never scales in | The next `apply` re-enables it |
-| 2026-10-04 11:02 | Same again, plus `set-desired-capacity 0` | The rebuilt CPU AMI still failed at `vllm serve` (PyPI torchcodec is a CUDA build: `libnvrtc.so.13` missing) | The next `apply` re-enables it |
+| 2026-10-04 08:20 | `aws cloudwatch disable-alarm-actions --alarm-names qwen-spot-scale-out` | A queued test request kept waking a worker on the broken AMI, which never becomes healthy and so never scales in | Resolved: the 12:12 apply re-enabled it |
+| 2026-10-04 11:02 | Same again, plus `set-desired-capacity 0` | The rebuilt CPU AMI still failed at `vllm serve` (PyPI torchcodec is a CUDA build: `libnvrtc.so.13` missing) | Resolved: the 12:12 apply re-enabled it |
 
 ## Checked facts (2026-10-04)
 
