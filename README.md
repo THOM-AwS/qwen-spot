@@ -176,6 +176,37 @@ scripts/check-quotas
 `ask` and `submit` wake the group when it is at 0. `wait` only polls for the
 result and never changes capacity, so a `qwenq down` is not undone.
 
+
+### Interactive use (no queue)
+
+Every `ask`/`submit` goes through SQS, which suits batch work and survives spot
+interruptions but cannot stream. For interactive work, open a session:
+
+```bash
+AWS_PROFILE=qwen-spot qwenq session            # wakes the GPU, opens an SSM tunnel, prints:
+# export OPENAI_BASE_URL=http://127.0.0.1:8000/v1
+# export OPENAI_API_KEY=unused
+```
+
+Any OpenAI-compatible client then talks to vLLM directly, with streaming: the
+`openai` SDK, curl, Aider, Continue, LangChain. Use the model name from
+`qwenq status` (default `qwen3.6-27b-abliterated`). The session ends on Ctrl-C or
+after `--max-hours` (default 2, a cost guard); `--down` also sets capacity to 0.
+
+The worker reads vLLM's `/metrics`, so tunnel traffic counts as activity and the
+instance is not scaled in under you. It publishes `QwenSpot/Busy`, which the
+idle backstop alarm also respects. Once the session ends, the normal 15-minute
+idle scale-in applies.
+
+From Python, `qwenq.client.chat()` uses the tunnel when a session is open and
+the queue otherwise, with the same result shape (plus `via`):
+
+```python
+from qwenq.client import chat
+result = chat([{"role": "user", "content": "Summarise RFC 9110 in one line"}], params={"max_tokens": 128})
+print(result["via"], result["output"])
+```
+
 ### Message schema
 
 ```json

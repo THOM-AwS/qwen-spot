@@ -22,11 +22,13 @@ from botocore.exceptions import BotoCoreError, ClientError
 from qwen_worker import schema
 from qwen_worker.config import WorkerConfig
 from qwen_worker.imds import Imds
-from qwen_worker.vllm import VllmClient, VllmError
+from qwen_worker.vllm import Activity, VllmClient, VllmError
 
 log = logging.getLogger(__name__)
 
 SQS_BATCH_MAX = 10
+METRIC_NAMESPACE = "QwenSpot"
+ACTIVITY_INTERVAL_S = 60.0
 RETRY_BACKOFF_S = 30
 SCALE_IN_RECHECK_S = 15.0
 BACKLOG_ATTRIBUTES = (
@@ -84,6 +86,7 @@ class Worker:
         autoscaling: Any,
         vllm: VllmClient,
         imds: Imds | None,
+        cloudwatch: Any = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.config = config
@@ -92,7 +95,9 @@ class Worker:
         self.autoscaling = autoscaling
         self.vllm = vllm
         self.imds = imds
+        self.cloudwatch = cloudwatch
         self.clock = clock
+        self._vllm_seen: Activity | None = None
         self.in_flight = InFlight()
         # stop: no new receives. terminate: the process is being killed.
         self.stop = threading.Event()
@@ -134,7 +139,10 @@ class Worker:
         log.info("vLLM healthy, polling queue", extra={"queue_url": self.config.queue_url})
         self._last_busy = self.clock()
 
-        threads = [threading.Thread(target=self._heartbeat_loop, name="heartbeat", daemon=True)]
+        threads = [
+            threading.Thread(target=self._heartbeat_loop, name="heartbeat", daemon=True),
+            threading.Thread(target=self._activity_loop, name="activity", daemon=True),
+        ]
         if self.imds is not None:
             threads.append(threading.Thread(target=self._interruption_loop, name="imds", daemon=True))
         for thread in threads:
@@ -468,8 +476,55 @@ class Worker:
     def idle_for_s(self) -> float:
         return self.clock() - self._last_busy
 
+    def observe_vllm_activity(self) -> bool:
+        """Count requests sent straight to vLLM (SSM tunnel) as activity.
+
+        The queue only sees its own messages; without this an interactive
+        session would be scaled in under the user after idle_minutes.
+        """
+        current = self.vllm.activity()
+        if current is None:
+            return False
+        previous, self._vllm_seen = self._vllm_seen, current
+        busy = current.in_progress > 0 or (previous is not None and current.finished_total > previous.finished_total)
+        if busy:
+            self._last_busy = self.clock()
+        return busy
+
+    def publish_activity_once(self) -> int:
+        """Publish QwenSpot/Busy (1 if anything happened in the last interval).
+
+        The idle backstop alarm reads it, so it never stops an instance that is
+        serving tunnel traffic. A dead worker publishes nothing, which the alarm
+        treats as idle.
+        """
+        self.observe_vllm_activity()
+        busy = int(len(self.in_flight) > 0 or self.idle_for_s() < ACTIVITY_INTERVAL_S * 1.5)
+        if self.cloudwatch is not None:
+            try:
+                self.cloudwatch.put_metric_data(
+                    Namespace=METRIC_NAMESPACE,
+                    MetricData=[
+                        {
+                            "MetricName": "Busy",
+                            "Dimensions": [{"Name": "AutoScalingGroupName", "Value": self.config.asg_name}],
+                            "Value": busy,
+                            "Unit": "Count",
+                        }
+                    ],
+                )
+            except (ClientError, BotoCoreError) as exc:
+                log.warning("could not publish activity metric", extra={"error": str(exc)})
+        return busy
+
+    def _activity_loop(self) -> None:
+        while not self.terminate.wait(ACTIVITY_INTERVAL_S):
+            if not self.stop.is_set():
+                self.publish_activity_once()
+
     def maybe_scale_in(self) -> bool:
-        """Set desired capacity to 0 once the queue has been empty for idle_minutes."""
+        """Set desired capacity to 0 once the queue and vLLM have been idle for idle_minutes."""
+        self.observe_vllm_activity()
         if len(self.in_flight) or self.idle_for_s() < self.config.idle_minutes * 60:
             return False
         backlog = self.backlog()

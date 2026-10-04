@@ -22,6 +22,41 @@ class VllmError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class Activity:
+    """What vLLM is doing, from its Prometheus /metrics endpoint.
+
+    Counts every request, including ones sent straight to vLLM over an SSM
+    tunnel, which the queue never sees.
+    """
+
+    in_progress: int
+    finished_total: float
+
+
+# Gauges and counter vLLM exports; summed across their labels (model, reason).
+_IN_PROGRESS = ("vllm:num_requests_running", "vllm:num_requests_waiting")
+_FINISHED = "vllm:request_success_total"
+
+
+def parse_activity(text: str) -> Activity:
+    in_progress = 0.0
+    finished = 0.0
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        name = line.split("{", 1)[0].split(" ", 1)[0]
+        try:
+            value = float(line.rsplit(" ", 1)[1])
+        except (IndexError, ValueError):
+            continue
+        if name in _IN_PROGRESS:
+            in_progress += value
+        elif name == _FINISHED:
+            finished += value
+    return Activity(in_progress=int(in_progress), finished_total=finished)
+
+
+@dataclass(frozen=True)
 class Completion:
     output: str | None
     reasoning: str | None
@@ -45,6 +80,16 @@ class VllmClient:
             return self._http.get("/health", timeout=5.0).status_code == 200
         except httpx.HTTPError:
             return False
+
+    def activity(self) -> Activity | None:
+        """Current vLLM load, or None if /metrics cannot be read."""
+        try:
+            response = self._http.get("/metrics", timeout=5.0)
+        except httpx.HTTPError:
+            return None
+        if response.status_code != 200:
+            return None
+        return parse_activity(response.text)
 
     def wait_healthy(
         self,

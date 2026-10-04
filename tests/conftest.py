@@ -101,10 +101,13 @@ class FakeVllm:
     reasoning: str | None = "thinking..."
     requests: list[dict[str, Any]] = field(default_factory=list)
     on_chat: Callable[[dict[str, Any]], None] | None = None
+    metrics: str | None = None  # Prometheus text served on /metrics; None means 404
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         if request.url.path == "/health":
             return httpx.Response(200 if self.healthy else 503)
+        if request.url.path == "/metrics":
+            return httpx.Response(200, text=self.metrics) if self.metrics is not None else httpx.Response(404)
         if request.url.path == "/v1/chat/completions":
             payload = json.loads(request.content)
             self.requests.append(payload)

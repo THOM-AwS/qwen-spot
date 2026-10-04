@@ -7,13 +7,14 @@ import json
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-from qwenq import api, settings
+from qwenq import api, session, settings
 
 EXIT_OK = 0
 EXIT_RESULT_ERROR = 1
@@ -173,6 +174,56 @@ def cmd_tunnel(args: argparse.Namespace) -> int:
     return EXIT_OK  # not reached
 
 
+def cmd_session(args: argparse.Namespace) -> int:
+    """Wake the GPU, open a tunnel to vLLM and hold it until Ctrl-C or --max-hours."""
+    queue = _queue(args)
+    boto = boto3.session.Session(profile_name=args.profile)
+    ssm = boto.client("ssm", region_name=queue.settings.region)
+    try:
+        aws = session.aws_cli()
+        ready = session.wait_for_worker(queue, ssm, on_progress=_err)
+        command = session.tunnel_command(aws, queue.settings.region, ready.instance_id, args.local_port, args.profile)
+        tunnel = session.open_tunnel(command)
+        _err(f"tunnel to {ready.instance_id} open; waiting for vLLM (the 27B model takes a few minutes to load)")
+        waited = session.wait_for_vllm(args.local_port, tunnel)
+    except session.SessionError as exc:
+        _err(str(exc))
+        return EXIT_USAGE
+
+    base = f"http://127.0.0.1:{args.local_port}/v1"
+    _err(f"ready after {ready.waited_s + waited:.0f}s. OpenAI-compatible API at {base}")
+    sys.stdout.write(
+        f"export OPENAI_BASE_URL={base}\nexport OPENAI_API_KEY=unused\n# model: {queue.settings.model_name}\n"
+    )
+    sys.stdout.flush()
+    _err(f"holding the session for up to {args.max_hours:g} h; Ctrl-C to end. The GPU costs money while it is up.")
+
+    deadline = time.monotonic() + args.max_hours * 3600
+    restarts = 0
+    try:
+        while time.monotonic() < deadline:
+            if tunnel.poll() is not None:
+                if restarts >= 5:
+                    _err("tunnel keeps dropping; ending the session")
+                    break
+                restarts += 1
+                _err(f"tunnel dropped, reopening ({restarts}/5)")
+                tunnel = session.open_tunnel(command)
+            time.sleep(5)
+        else:
+            _err(f"--max-hours {args.max_hours:g} reached; ending the session")
+    except KeyboardInterrupt:
+        _err("ending the session")
+    finally:
+        tunnel.terminate()
+    if args.down:
+        queue.set_capacity(0)
+        _err("desired capacity set to 0")
+    else:
+        _err("the worker scales in after its idle timeout (15 min by default); `qwenq down` stops it now")
+    return EXIT_OK
+
+
 # ---- parser -------------------------------------------------------------
 
 
@@ -229,6 +280,12 @@ def build_parser() -> argparse.ArgumentParser:
         ("down", cmd_down, "set desired capacity to 0"),
     ):
         sub.add_parser(name, help=text).set_defaults(func=func)
+
+    p = sub.add_parser("session", help="wake the GPU and hold an SSM tunnel to vLLM (OpenAI API on localhost)")
+    p.add_argument("--local-port", type=int, default=session.DEFAULT_PORT)
+    p.add_argument("--max-hours", type=float, default=2.0, help="end the session after this long (cost guard)")
+    p.add_argument("--down", action="store_true", help="set capacity to 0 when the session ends")
+    p.set_defaults(func=cmd_session)
 
     p = sub.add_parser("tunnel", help="SSM port-forward to vLLM for interactive use")
     p.add_argument("--local-port", type=int, default=8000)

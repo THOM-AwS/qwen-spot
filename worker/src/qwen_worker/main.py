@@ -31,6 +31,7 @@ def build_worker(config: WorkerConfig) -> Worker:
         autoscaling=session.client("autoscaling", config=boto_config),
         vllm=VllmClient(config.vllm_url, timeout_s=config.request_timeout_s),
         imds=Imds(),
+        cloudwatch=session.client("cloudwatch", config=boto_config),
     )
 
 

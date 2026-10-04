@@ -215,9 +215,12 @@ resource "aws_cloudwatch_metric_alarm" "idle_backstop" {
   alarm_actions      = [var.sleep_policy_arn, aws_sns_topic.alerts.arn]
 
   metric_query {
-    id          = "idle"
-    expression  = "IF(FILL(inservice, 0) >= 1 AND FILL(visible, 0) == 0 AND FILL(inflight, 0) == 0, 1, 0)"
-    label       = "In service with an empty queue"
+    id = "idle"
+    # busy is the worker's own QwenSpot/Busy metric. It covers requests sent
+    # straight to vLLM over an SSM tunnel, which the queue never sees. A dead
+    # worker publishes nothing, and FILL 0 then counts as idle.
+    expression  = "IF(FILL(inservice, 0) >= 1 AND FILL(visible, 0) == 0 AND FILL(inflight, 0) == 0 AND FILL(busy, 0) == 0, 1, 0)"
+    label       = "In service, empty queue, no direct traffic"
     return_data = true
   }
 
@@ -249,6 +252,17 @@ resource "aws_cloudwatch_metric_alarm" "idle_backstop" {
       namespace   = "AWS/SQS"
       metric_name = "ApproximateNumberOfMessagesNotVisible"
       dimensions  = { QueueName = var.queue_name }
+      stat        = "Maximum"
+      period      = 60
+    }
+  }
+
+  metric_query {
+    id = "busy"
+    metric {
+      namespace   = "QwenSpot"
+      metric_name = "Busy"
+      dimensions  = { AutoScalingGroupName = var.asg_name }
       stat        = "Maximum"
       period      = 60
     }

@@ -452,3 +452,62 @@ def test_run_fails_when_vllm_never_healthy(aws: Aws, fake_vllm: FakeVllm) -> Non
     fake_vllm.healthy = False
     worker = make_worker(aws, fake_vllm, health_timeout_s=0.01)
     assert worker.run() == 1
+
+
+# ---- direct (tunnel) traffic ---------------------------------------------------
+
+METRICS_IDLE = """# HELP vllm:num_requests_running Number of requests running
+vllm:num_requests_running{model_name="m"} 0.0
+vllm:num_requests_waiting{model_name="m"} 0.0
+vllm:request_success_total{finished_reason="stop",model_name="m"} 3.0
+vllm:request_success_total{finished_reason="length",model_name="m"} 1.0
+"""
+
+
+@pytest.mark.unit
+def test_parse_activity_sums_labels() -> None:
+    from qwen_worker.vllm import parse_activity
+
+    activity = parse_activity(METRICS_IDLE.replace('running{model_name="m"} 0.0', 'running{model_name="m"} 2.0'))
+    assert activity.in_progress == 2
+    assert activity.finished_total == 4.0
+
+
+def test_tunnel_traffic_defers_scale_in(aws: Aws, fake_vllm: FakeVllm) -> None:
+    clock = FakeClock()
+    worker = make_worker(aws, fake_vllm, clock=clock, idle_minutes=5)
+    fake_vllm.metrics = METRICS_IDLE
+    worker.observe_vllm_activity()  # baseline
+    clock.now += 400
+    # A request finished over the tunnel since the last look: not idle.
+    fake_vllm.metrics = METRICS_IDLE.replace("} 3.0", "} 9.0")
+    assert worker.maybe_scale_in() is False
+    assert worker.idle_for_s() == 0
+    clock.now += 400
+    assert worker.maybe_scale_in() is True  # nothing new since: idle again
+
+
+def test_running_request_counts_as_busy(aws: Aws, fake_vllm: FakeVllm) -> None:
+    worker = make_worker(aws, fake_vllm)
+    fake_vllm.metrics = METRICS_IDLE.replace('waiting{model_name="m"} 0.0', 'waiting{model_name="m"} 1.0')
+    assert worker.observe_vllm_activity() is True
+
+
+def test_no_metrics_endpoint_is_not_busy(aws: Aws, fake_vllm: FakeVllm) -> None:
+    worker = make_worker(aws, fake_vllm)
+    assert worker.observe_vllm_activity() is False
+
+
+def test_publish_activity_metric(aws: Aws, fake_vllm: FakeVllm) -> None:
+    import boto3
+
+    cloudwatch = boto3.client("cloudwatch", region_name="eu-north-1")
+    clock = FakeClock()
+    worker = make_worker(aws, fake_vllm, clock=clock)
+    worker.cloudwatch = cloudwatch
+    assert worker.publish_activity_once() == 1  # just started: recent activity
+    clock.now += 300
+    assert worker.publish_activity_once() == 0
+    metrics = cloudwatch.list_metrics(Namespace="QwenSpot")["Metrics"]
+    assert {m["MetricName"] for m in metrics} == {"Busy"}
+    assert metrics[0]["Dimensions"] == [{"Name": "AutoScalingGroupName", "Value": aws.asg_name}]
