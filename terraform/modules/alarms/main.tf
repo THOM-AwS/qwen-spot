@@ -13,6 +13,8 @@ resource "aws_sns_topic_subscription" "email" {
 # up to ~15 minutes to resume reporting. This alarm is the backstop; the client
 # wake call is the fast path.
 resource "aws_cloudwatch_metric_alarm" "scale_out" {
+  count = var.worker_group_enabled ? 1 : 0
+
   alarm_name          = "${var.name_prefix}-scale-out"
   alarm_description   = "Messages waiting: set worker capacity to 1."
   namespace           = "AWS/SQS"

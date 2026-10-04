@@ -22,6 +22,11 @@ variable "asg_name" {
   type = string
 }
 
+variable "worker_group_enabled" {
+  description = "The scale-out alarm needs the wake policy, which exists only once the worker group does."
+  type        = bool
+}
+
 variable "wake_policy_arn" {
   type = string
 }

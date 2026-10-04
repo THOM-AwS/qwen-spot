@@ -540,12 +540,6 @@ data "aws_iam_policy_document" "services" {
       "ec2:CreateLaunchTemplateVersion",
       "ec2:DeleteLaunchTemplate",
       "ec2:DeleteLaunchTemplateVersions",
-      "ec2:AuthorizeSecurityGroupIngress",
-      "ec2:AuthorizeSecurityGroupEgress",
-      "ec2:RevokeSecurityGroupIngress",
-      "ec2:RevokeSecurityGroupEgress",
-      "ec2:ModifySecurityGroupRules",
-      "ec2:DeleteSecurityGroup",
       "ec2:CreateRoute",
       "ec2:ReplaceRoute",
       "ec2:DeleteRoute",
@@ -559,6 +553,28 @@ data "aws_iam_policy_document" "services" {
       "ec2:DeleteTags",
     ]
     resources = ["*"]
+
+    condition {
+      test     = "StringNotEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = ["qwen-spot"]
+    }
+  }
+
+  # Security group rule changes are also authorised against the new rule
+  # resource, which has no tags yet, so this guard is scoped to the group itself.
+  statement {
+    sid    = "DenyForeignSecurityGroupChanges"
+    effect = "Deny"
+    actions = [
+      "ec2:AuthorizeSecurityGroupIngress",
+      "ec2:AuthorizeSecurityGroupEgress",
+      "ec2:RevokeSecurityGroupIngress",
+      "ec2:RevokeSecurityGroupEgress",
+      "ec2:ModifySecurityGroupRules",
+      "ec2:DeleteSecurityGroup",
+    ]
+    resources = ["arn:${local.p}:ec2:*:${local.account_id}:security-group/*"]
 
     condition {
       test     = "StringNotEquals"
@@ -867,11 +883,12 @@ data "aws_iam_policy_document" "plan_read" {
     resources = ["arn:${local.p}:sns:*:${local.account_id}:qwen-spot-*"]
   }
 
-  # Subscription ARNs are <topic ARN>:<id>, so this covers only project topics.
+  # SNS authorises GetSubscriptionAttributes against the topic ARN, so the
+  # project topic pattern covers its subscriptions and nothing else.
   statement {
     sid       = "ProjectSubscriptions"
     actions   = ["sns:GetSubscriptionAttributes"]
-    resources = ["arn:${local.p}:sns:*:${local.account_id}:qwen-spot-*:*"]
+    resources = ["arn:${local.p}:sns:*:${local.account_id}:qwen-spot-*"]
   }
 
   statement {

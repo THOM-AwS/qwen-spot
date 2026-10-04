@@ -7,10 +7,13 @@ set -uo pipefail
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
 
-if terraform "$@" >"$log" 2>&1; then
+# Capture the status directly: after "if cmd; then ...; fi" $? is the status of
+# the if statement (0), not of cmd, which silently turned failures into success.
+status=0
+terraform "$@" >"$log" 2>&1 || status=$?
+if [ "$status" -eq 0 ]; then
   exit 0
 fi
-status=$?
 
 echo "::error::terraform $1 failed (exit $status); redacted error lines follow"
 grep -E -A6 'Error|error:' "$log" \

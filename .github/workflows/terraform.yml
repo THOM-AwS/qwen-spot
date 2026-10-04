@@ -19,6 +19,13 @@ on:
         type: choice
         options: [plan, apply]
         default: plan
+      refresh:
+        description: >-
+          Refresh state before planning. Turn off only to recover when the CI
+          roles cannot read a resource (for example a bucket policy that denies
+          them HeadBucket); it plans from state alone.
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -76,8 +83,11 @@ jobs:
       # never uploaded and only resource addresses and actions are printed.
       - name: Plan
         id: plan
+        env:
+          # Pushes have no inputs: refresh is always on for them.
+          REFRESH: ${{ github.event_name != 'workflow_dispatch' || inputs.refresh }}
         run: |
-          ../.github/scripts/tf-quiet.sh plan -input=false -no-color -lock=false -out=tfplan
+          ../.github/scripts/tf-quiet.sh plan -input=false -no-color -lock=false -refresh="$REFRESH" -out=tfplan
           terraform show -json tfplan | jq -r '
             .resource_changes[]
             | select(.change.actions != ["no-op"])
@@ -140,8 +150,9 @@ jobs:
       - name: Re-plan and compare with the approved plan
         env:
           APPROVED_SHA: ${{ needs.plan.outputs.summary_sha }}
+          REFRESH: ${{ inputs.refresh }}
         run: |
-          ../.github/scripts/tf-quiet.sh plan -input=false -no-color -out=tfplan
+          ../.github/scripts/tf-quiet.sh plan -input=false -no-color -refresh="$REFRESH" -out=tfplan
           terraform show -json tfplan | jq -r '
             .resource_changes[]
             | select(.change.actions != ["no-op"])

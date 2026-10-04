@@ -22,6 +22,11 @@ locals {
   # exists at desired 0, it just cannot launch until Packer has run.
   ami_id = var.ami_id != null ? var.ami_id : try(data.aws_ami_ids.worker.ids[0], null)
 
+  # EC2 Auto Scaling refuses a group whose launch template has no image, so the
+  # worker group (and its wake policy) exists only once a worker AMI does. Known
+  # at plan time: the AMI lookup is a data source.
+  worker_group_enabled = local.ami_id != null
+
   worker_user_data = templatefile("${path.module}/templates/worker-user-data.sh.tftpl", {
     config = var.worker_config
   })
@@ -85,6 +90,8 @@ resource "aws_launch_template" "worker" {
 }
 
 resource "aws_autoscaling_group" "worker" {
+  count = local.worker_group_enabled ? 1 : 0
+
   name                      = var.asg_name
   min_size                  = 0
   max_size                  = var.max_instances
@@ -133,8 +140,10 @@ resource "aws_autoscaling_group" "worker" {
 
 # Backstop for a client that skipped its wake call: the queue alarm sets capacity to 1.
 resource "aws_autoscaling_policy" "wake" {
+  count = local.worker_group_enabled ? 1 : 0
+
   name                   = "${var.name_prefix}-wake"
-  autoscaling_group_name = aws_autoscaling_group.worker.name
+  autoscaling_group_name = aws_autoscaling_group.worker[0].name
   policy_type            = "SimpleScaling"
   adjustment_type        = "ExactCapacity"
   scaling_adjustment     = 1

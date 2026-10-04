@@ -18,7 +18,10 @@ locals {
   permissions_boundary_arn = coalesce(var.permissions_boundary_arn, "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/qwen-spot-boundary")
 
   # Known before the ASGs exist, so user data and IAM can name them without a cycle.
-  asg_name          = "${var.name_prefix}-workers"
+  asg_name = "${var.name_prefix}-workers"
+  # Pattern ARN: IAM scopes to the group by name, so policies do not depend on
+  # the group existing (it is only created once a worker AMI exists).
+  asg_arn           = "arn:${data.aws_partition.current.partition}:autoscaling:${var.region}:${data.aws_caller_identity.current.account_id}:autoScalingGroup:*:autoScalingGroupName/${var.name_prefix}-workers"
   uploader_asg_name = "${var.name_prefix}-uploader"
 
   weights_bucket = "${var.name_prefix}-weights-${random_id.suffix.hex}"
@@ -52,7 +55,7 @@ module "iam" {
   queue_arn                = module.queue.queue_arn
   dlq_arn                  = module.queue.dlq_arn
   kms_key_arn              = aws_kms_key.main.arn
-  asg_arn                  = module.compute.asg_arn
+  asg_arn                  = local.asg_arn
   uploader_asg_arn         = module.compute.uploader_asg_arn
   worker_log_group_arn     = aws_cloudwatch_log_group.worker.arn
   uploader_log_group_arn   = aws_cloudwatch_log_group.uploader.arn
@@ -148,15 +151,16 @@ module "compute" {
 module "alarms" {
   source = "./modules/alarms"
 
-  name_prefix        = var.name_prefix
-  kms_key_arn        = aws_kms_key.main.arn
-  alert_email        = var.alert_email
-  queue_name         = module.queue.queue_name
-  dlq_name           = module.queue.dlq_name
-  asg_name           = module.compute.asg_name
-  wake_policy_arn    = module.compute.wake_policy_arn
-  max_uptime_hours   = var.max_uptime_hours
-  monthly_budget_usd = var.monthly_budget_usd
+  name_prefix          = var.name_prefix
+  kms_key_arn          = aws_kms_key.main.arn
+  alert_email          = var.alert_email
+  queue_name           = module.queue.queue_name
+  dlq_name             = module.queue.dlq_name
+  asg_name             = module.compute.asg_name
+  wake_policy_arn      = module.compute.wake_policy_arn
+  worker_group_enabled = module.compute.worker_group_enabled
+  max_uptime_hours     = var.max_uptime_hours
+  monthly_budget_usd   = var.monthly_budget_usd
 }
 
 resource "aws_cloudwatch_log_group" "worker" {
