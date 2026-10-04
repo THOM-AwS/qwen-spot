@@ -60,17 +60,32 @@ def console_events(ec2, instance_id: str) -> list[dict]:
     return events
 
 
-def print_uploader_log(logs, group: str, stream: str, tail: int = 40) -> None:
-    """The uploader ships its log here on exit. Show the end of it."""
-    print(f"uploader {stream} exited without a completion event; last lines of {group}/{stream}:", file=sys.stderr)
+def finished_ok_from_log(logs, group: str, stream: str, tail: int = 40) -> bool:
+    """The uploader ships its log on exit. Decide from it, and show it on failure.
+
+    Small models finish in well under a minute, before the serial console is
+    ever captured, so the shipped log is the only record of the outcome.
+    """
     time.sleep(10)  # put_log_events is eventually consistent
     try:
         events = logs.get_log_events(logGroupName=group, logStreamName=stream, startFromHead=False, limit=tail)
     except ClientError as exc:
-        print(f"  (no log: {exc.response['Error']['Code']})", file=sys.stderr)
-        return
-    for event in events["events"]:
-        print(f"  {event['message']}", file=sys.stderr)
+        print(f"uploader {stream} exited; no log in {group} ({exc.response['Error']['Code']})", file=sys.stderr)
+        return False
+    messages = [e["message"] for e in events["events"]]
+    for line in messages:
+        start = line.find('{"')
+        try:
+            event = json.loads(line[start:]) if start >= 0 else {}
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict) and event.get("msg") in DONE_MESSAGES:
+            print(f"  [info] {event['msg']}")
+            return True
+    print(f"uploader {stream} exited without completing; last lines of {group}/{stream}:", file=sys.stderr)
+    for line in messages:
+        print(f"  {line}", file=sys.stderr)
+    return False
 
 
 def group_state(autoscaling, name: str) -> str:
@@ -128,8 +143,10 @@ def main() -> int:
             if instances:
                 instance_id = instances[0]["InstanceId"]
             elif instance_id and groups and groups[0]["DesiredCapacity"] == 0:
-                # The uploader scaled itself to 0 without a completion event we saw.
-                print_uploader_log(session.client("logs"), log_group, instance_id)
+                # The uploader scaled itself to 0 before we saw a completion event.
+                if finished_ok_from_log(session.client("logs"), log_group, instance_id):
+                    print(f"done: {target}")
+                    return 0
                 return 1
             if instance_id:
                 for event in console_events(ec2, instance_id):
