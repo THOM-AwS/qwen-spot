@@ -19,6 +19,12 @@ variable "name_prefix" {
 
 # --- Compute ------------------------------------------------------------------
 
+variable "worker_availability_zones" {
+  description = "Zones the worker group launches in. Empty means every zone. In eu-north-1 only 1c accepts p5.4xlarge spot: 1a and 1b reject it with InvalidFleetConfiguration, which wastes a launch attempt each."
+  type        = list(string)
+  default     = ["eu-north-1c"]
+}
+
 variable "instance_types" {
   description = "Spot instance types the ASG may launch. Each must fit the model."
   type        = list(string)

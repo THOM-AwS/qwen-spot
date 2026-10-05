@@ -96,7 +96,7 @@ resource "aws_autoscaling_group" "worker" {
   min_size                  = 0
   max_size                  = var.max_instances
   desired_capacity          = 0
-  vpc_zone_identifier       = var.subnet_ids
+  vpc_zone_identifier       = var.worker_subnet_ids
   health_check_type         = "EC2"
   health_check_grace_period = 900
   capacity_rebalance        = false

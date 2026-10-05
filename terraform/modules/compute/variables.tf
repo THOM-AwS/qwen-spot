@@ -45,6 +45,11 @@ variable "root_device_name" {
   default     = "/dev/sda1"
 }
 
+variable "worker_subnet_ids" {
+  description = "Subnets for the worker group. A subset of subnet_ids: only zones where the GPU type has spot capacity."
+  type        = list(string)
+}
+
 variable "subnet_ids" {
   type = list(string)
 }

@@ -64,8 +64,8 @@ H100 (p5.4xlarge spot, huihui Qwen3.6 27B abliterated, 2026-10-05):
 | Answers | correct; 54 tokens in 1.2 s (about 45 tok/s single stream); warm request 4 s end to end |
 | Session tunnel | blocked by a client policy bug (`Bool` instead of `BoolIfExists` on `ssm:SessionDocumentAccessCheck`), fixed |
 
-Still to do: measure a clean cold start with the fixes baked in, re-run `qwenq session`, add `ninja` to the
-image to bring back FlashInfer's kernels, and codify the 1c-only subnets.
+Still to do: measure a clean cold start with the fixes baked in, re-run `qwenq session`, and add `ninja` to the
+image to bring back FlashInfer's kernels.
 
 ### Manual changes
 
@@ -73,7 +73,7 @@ image to bring back FlashInfer's kernels, and codify the 1c-only subnets.
 |---|---|---|---|
 | 2026-10-04 08:20 | `aws cloudwatch disable-alarm-actions --alarm-names qwen-spot-scale-out` | A queued test request kept waking a worker on the broken AMI, which never becomes healthy and so never scales in | Resolved: the 12:12 apply re-enabled it |
 | 2026-10-04 11:02 | Same again, plus `set-desired-capacity 0` | The rebuilt CPU AMI still failed at `vllm serve` (PyPI torchcodec is a CUDA build: `libnvrtc.so.13` missing) | Resolved: the 12:12 apply re-enabled it |
-| 2026-10-05 00:34 | `disable-alarm-actions` on `qwen-spot-stalled` and `qwen-spot-idle-backstop`; worker subnets cut to eu-north-1c in the console | Live troubleshooting of the first H100 boot (vLLM refused to start: `max_num_seqs` 1024 > 350 Mamba cache blocks) without the breaker stopping the box; only 1c has p5.4xlarge spot | Re-enable after the fix; subnets to be codified as `worker_availability_zones` |
+| 2026-10-05 00:34 | `disable-alarm-actions` on `qwen-spot-stalled` and `qwen-spot-idle-backstop`; worker subnets cut to eu-north-1c in the console | Live troubleshooting of the first H100 boot (vLLM refused to start: `max_num_seqs` 1024 > 350 Mamba cache blocks) without the breaker stopping the box; only 1c has p5.4xlarge spot | Resolved: alarms re-enabled 02:45 UTC; subnets codified as `worker_availability_zones` (default `["eu-north-1c"]`) |
 | 2026-10-05 00:35 | Live edit of `/etc/qwen-spot/config.env` on the H100 (`QWEN_VLLM_EXTRA_ARGS="--max-num-seqs 64"`), vLLM restarted | Same | Codified as `max_num_seqs` (default 64); lost when that instance goes |
 
 ## Checked facts (2026-10-04)

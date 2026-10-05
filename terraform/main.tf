@@ -127,6 +127,7 @@ module "compute" {
   max_instances             = var.max_instances
   root_volume_size_gb       = var.root_volume_size_gb
   subnet_ids                = module.network.subnet_ids
+  worker_subnet_ids         = length(var.worker_availability_zones) > 0 ? [for az in var.worker_availability_zones : module.network.subnet_ids_by_az[az]] : module.network.subnet_ids
   security_group_id         = module.network.security_group_id
   kms_key_arn               = aws_kms_key.main.arn
   instance_profile_name     = module.iam.instance_profile_name
