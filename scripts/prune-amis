@@ -1,0 +1,86 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["boto3==1.43.108"]
+# [tool.uv]
+# exclude-newer = "2026-10-04T00:00:00Z"
+# ///
+"""Deregister superseded qwen-spot AMIs and delete their snapshots.
+
+Keeps, per Engine tag (gpu, cpu), the newest image plus any image a qwen-spot
+launch template version still references. Run after every Packer build.
+Dry run by default; --yes deletes. Needs AWS_PROFILE set explicitly.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import boto3
+from _common import require_profile
+
+
+def referenced_images(ec2) -> set[str]:
+    """Images used by any version of a qwen-spot launch template."""
+    used: set[str] = set()
+    templates = ec2.describe_launch_templates(Filters=[{"Name": "tag:Project", "Values": ["qwen-spot"]}])
+    for template in templates["LaunchTemplates"]:
+        pages = ec2.get_paginator("describe_launch_template_versions").paginate(
+            LaunchTemplateId=template["LaunchTemplateId"]
+        )
+        for page in pages:
+            for version in page["LaunchTemplateVersions"]:
+                image = version.get("LaunchTemplateData", {}).get("ImageId")
+                if image:
+                    used.add(image)
+    return used
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--region", default="eu-north-1")
+    parser.add_argument("--yes", action="store_true", help="actually deregister (default: dry run)")
+    args = parser.parse_args()
+
+    profile = require_profile()
+    ec2 = boto3.Session(profile_name=profile, region_name=args.region).client("ec2")
+    images = ec2.describe_images(Owners=["self"], Filters=[{"Name": "tag:Project", "Values": ["qwen-spot"]}])["Images"]
+    used = referenced_images(ec2)
+
+    by_engine: dict[str, list[dict]] = {}
+    for image in images:
+        engine = next((t["Value"] for t in image.get("Tags", []) if t["Key"] == "Engine"), "unknown")
+        by_engine.setdefault(engine, []).append(image)
+
+    doomed = []
+    for engine, group in sorted(by_engine.items()):
+        group.sort(key=lambda i: i["CreationDate"], reverse=True)
+        newest = group[0]["ImageId"]
+        for image in group:
+            keep = image["ImageId"] == newest or image["ImageId"] in used
+            reason = "newest" if image["ImageId"] == newest else ("in a launch template" if keep else "superseded")
+            print(f"{'keep' if keep else 'drop'}  {engine:4} {image['ImageId']} {image['Name']} ({reason})")
+            if not keep:
+                doomed.append(image)
+
+    if not doomed:
+        print("nothing to prune")
+        return 0
+    if not args.yes:
+        print(f"dry run: {len(doomed)} image(s) would be deregistered; pass --yes")
+        return 0
+    for image in doomed:
+        snapshots = [m["Ebs"]["SnapshotId"] for m in image.get("BlockDeviceMappings", []) if "Ebs" in m]
+        ec2.deregister_image(ImageId=image["ImageId"])
+        for snapshot in snapshots:
+            ec2.delete_snapshot(SnapshotId=snapshot)
+        print(f"deregistered {image['ImageId']} {image['Name']}, deleted {', '.join(snapshots) or 'no snapshots'}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

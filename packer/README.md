@@ -29,7 +29,9 @@ installed locally). Packer's temporary security group only admits
 build needs a subnet with outbound internet access: the default VPC, or
 `-var subnet_id=subnet-...`.
 
-`manifest.json` records the AMI ID. Terraform finds the newest
+`manifest.json` records the AMI ID. After a build, run `scripts/prune-amis --yes`: it
+keeps the newest image per engine plus any image a launch template still uses, and
+deregisters the rest with their snapshots. Terraform finds the newest
 `qwen-spot-<engine>-*` AMI owned by the account.
 
 Cost: about 30 minutes on c7i.2xlarge (about 0.40 USD/hr in eu-north-1), so

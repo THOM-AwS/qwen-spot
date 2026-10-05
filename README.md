@@ -56,12 +56,14 @@ failures as success, and `qwenq wait` re-waking a group that had been set to 0.
 Next: build the GPU AMI, switch `TFVARS` to the H100 profile (`engine = "gpu"`,
 `p5.4xlarge`, the 27B model), apply, run `scripts/upload-model`, then repeat the tests.
 
-### Manual changes (all resolved)
+### Manual changes
 
 | When (UTC) | Change | Why | Undo |
 |---|---|---|---|
 | 2026-10-04 08:20 | `aws cloudwatch disable-alarm-actions --alarm-names qwen-spot-scale-out` | A queued test request kept waking a worker on the broken AMI, which never becomes healthy and so never scales in | Resolved: the 12:12 apply re-enabled it |
 | 2026-10-04 11:02 | Same again, plus `set-desired-capacity 0` | The rebuilt CPU AMI still failed at `vllm serve` (PyPI torchcodec is a CUDA build: `libnvrtc.so.13` missing) | Resolved: the 12:12 apply re-enabled it |
+| 2026-10-05 00:34 | `disable-alarm-actions` on `qwen-spot-stalled` and `qwen-spot-idle-backstop`; worker subnets cut to eu-north-1c in the console | Live troubleshooting of the first H100 boot (vLLM refused to start: `max_num_seqs` 1024 > 350 Mamba cache blocks) without the breaker stopping the box; only 1c has p5.4xlarge spot | Re-enable after the fix; subnets to be codified as `worker_availability_zones` |
+| 2026-10-05 00:35 | Live edit of `/etc/qwen-spot/config.env` on the H100 (`QWEN_VLLM_EXTRA_ARGS="--max-num-seqs 64"`), vLLM restarted | Same | Codified as `max_num_seqs` (default 64); lost when that instance goes |
 
 ## Checked facts (2026-10-04)
 

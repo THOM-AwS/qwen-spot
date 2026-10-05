@@ -28,7 +28,7 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run ruff check scripts/spot-prices scripts/check-quotas scripts/upload-model
+      - run: uv run ruff check scripts/spot-prices scripts/check-quotas scripts/upload-model scripts/prune-amis
       - run: uv run mypy worker/src client/src
       - run: uv run bandit -q -r worker/src client/src
       - run: uv run pytest -q --cov --cov-report=term --cov-fail-under=80

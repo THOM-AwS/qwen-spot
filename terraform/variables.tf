@@ -155,6 +155,17 @@ variable "gpu_memory_utilization" {
   }
 }
 
+variable "max_num_seqs" {
+  description = "vLLM --max-num-seqs. Qwen3.6 is a hybrid (Mamba-style) model that needs one state block per running sequence; vLLM's default of 1024 does not fit next to the 27B weights on one H100 (about 350 blocks), and the engine refuses to start. The worker sends at most worker_concurrency at a time, so 64 leaves room for tunnel traffic."
+  type        = number
+  default     = 64
+
+  validation {
+    condition     = var.max_num_seqs >= 1 && var.max_num_seqs <= 256 && floor(var.max_num_seqs) == var.max_num_seqs
+    error_message = "max_num_seqs must be a whole number from 1 to 256."
+  }
+}
+
 variable "vllm_extra_args" {
   description = "Extra space-separated vllm serve arguments."
   type        = string

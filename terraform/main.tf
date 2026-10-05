@@ -147,7 +147,7 @@ module "compute" {
     QWEN_STREAMER_CONCURRENCY   = tostring(var.streamer_concurrency)
     QWEN_MAX_MODEL_LEN          = tostring(var.max_model_len)
     QWEN_GPU_MEMORY_UTILIZATION = tostring(var.gpu_memory_utilization)
-    QWEN_VLLM_EXTRA_ARGS        = var.vllm_extra_args
+    QWEN_VLLM_EXTRA_ARGS        = trimspace("--max-num-seqs ${var.max_num_seqs} ${var.vllm_extra_args}")
     QWEN_ENGINE                 = var.engine
     QWEN_COMPILE_CACHE_S3_URI   = local.compile_cache_s3_uri
     QWEN_IDLE_MINUTES           = tostring(var.idle_minutes)
