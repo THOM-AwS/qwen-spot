@@ -62,10 +62,17 @@ H100 (p5.4xlarge spot, huihui Qwen3.6 27B abliterated, 2026-10-05):
 | Engine | KV cache 18.8 GiB, 267k tokens, 8 concurrent 32k-token requests |
 | Startup fixes found live | `max_num_seqs` 1024 does not fit Qwen3.6's per-sequence Mamba state (350 blocks): now 64. FlashInfer JIT-compiles its GDN prefill and sampler kernels and the image has no `ninja`: GDN prefill uses triton and `VLLM_USE_FLASHINFER_SAMPLER=0`. |
 | Answers | correct; 54 tokens in 1.2 s (about 45 tok/s single stream); warm request 4 s end to end |
-| Session tunnel | blocked by a client policy bug (`Bool` instead of `BoolIfExists` on `ssm:SessionDocumentAccessCheck`), fixed |
+| Clean cold start (all fixes baked in, capacity on the first try) | 7 min 36 s submit to answer: launch 18 s, boot plus model stream, load and compile the rest |
+| Streaming over `qwenq session` | first token 0.39 s; 4 lines in 1.0 s |
+| Shell session as the client role | refused (only port forwarding is allowed) |
+| Session policy | the first attempt was denied by `Bool` on `ssm:SessionDocumentAccessCheck`; `BoolIfExists` fixed it |
 
-Still to do: measure a clean cold start with the fixes baked in, re-run `qwenq session`, and add `ninja` to the
-image to bring back FlashInfer's kernels.
+Still to do:
+- **Cold start is over the 5-minute target.** Candidates: keep the torch.compile cache in S3 (the
+  `cache-sync` unit exists but has not uploaded yet), add `ninja` so FlashInfer kernels are prebuilt
+  rather than avoided, and pre-warm the root volume.
+- After changing the model, re-run `qwenq configure`. `session` refuses an endpoint that serves a
+  different model name.
 
 ### Manual changes
 

@@ -178,3 +178,29 @@ def test_tunnel_command_forwards_vllm_port() -> None:
     assert params == {"portNumber": ["8000"], "localPortNumber": ["8001"]}
     assert command[-2:] == ["--profile", "qwen-spot"]
     assert "AWS-StartPortForwardingSession" in command
+
+
+def test_session_closes_tunnel_when_setup_fails(aws: Aws, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed setup after the tunnel opened must not leave a port-forward running."""
+    from qwenq import cli
+
+    write_config(aws, tmp_path, monkeypatch)
+
+    class FakeTunnel:
+        pid = os.getpid()
+        terminated = False
+
+        def poll(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            FakeTunnel.terminated = True
+
+    monkeypatch.setattr(session, "aws_cli", lambda: "/usr/bin/aws")
+    monkeypatch.setattr(session, "wait_for_worker", lambda *_a, **_k: session.Ready("i-1", 1.0))
+    monkeypatch.setattr(session, "open_tunnel", lambda _cmd: FakeTunnel())
+    monkeypatch.setattr(session, "wait_for_vllm", lambda *_a, **_k: 1.0)
+    monkeypatch.setattr(session, "serves_model", lambda *_a, **_k: False)
+    assert cli.main(["session", "--max-hours", "0.001"]) == cli.EXIT_USAGE
+    assert FakeTunnel.terminated
+    assert not session.state_path().exists()

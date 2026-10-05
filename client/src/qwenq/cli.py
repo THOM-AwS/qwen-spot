@@ -179,6 +179,7 @@ def cmd_session(args: argparse.Namespace) -> int:
     queue = _queue(args)
     boto = boto3.session.Session(profile_name=args.profile)
     ssm = boto.client("ssm", region_name=queue.settings.region)
+    tunnel = None
     try:
         aws = session.aws_cli()
         ready = session.wait_for_worker(queue, ssm, on_progress=_err)
@@ -187,9 +188,16 @@ def cmd_session(args: argparse.Namespace) -> int:
         _err(f"tunnel to {ready.instance_id} open; waiting for vLLM (the 27B model takes a few minutes to load)")
         waited = session.wait_for_vllm(args.local_port, tunnel)
         if not session.serves_model(args.local_port, queue.settings.model_name):
-            raise session.SessionError(f"the endpoint is healthy but does not serve {queue.settings.model_name}")
-    except session.SessionError as exc:
-        _err(str(exc))
+            raise session.SessionError(
+                f"the endpoint is healthy but does not serve {queue.settings.model_name}; "
+                "if the model changed, run `qwenq configure --terraform-dir terraform`"
+            )
+    except (session.SessionError, KeyboardInterrupt) as exc:
+        # Never leave a port-forward behind: a stray tunnel keeps serving the
+        # port with nothing tracking it.
+        if tunnel is not None:
+            tunnel.terminate()
+        _err(str(exc) or "interrupted")
         return EXIT_USAGE
 
     base = f"http://127.0.0.1:{args.local_port}/v1"
