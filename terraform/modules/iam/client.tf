@@ -81,7 +81,10 @@ data "aws_iam_policy_document" "client" {
     resources = ["arn:${var.partition}:ssm:${var.region}::document/AWS-StartPortForwardingSession"]
 
     condition {
-      test     = "Bool"
+      # BoolIfExists, as in the AWS Session Manager examples: the key is only
+      # present on the document check, and plain Bool failed the instance check
+      # (StartSession AccessDenied).
+      test     = "BoolIfExists"
       variable = "ssm:SessionDocumentAccessCheck"
       values   = ["true"]
     }
@@ -102,7 +105,10 @@ data "aws_iam_policy_document" "client" {
     resources = ["arn:${var.partition}:ec2:${var.region}:${var.account_id}:instance/*"]
 
     condition {
-      test     = "Bool"
+      # BoolIfExists, as in the AWS Session Manager examples: the key is only
+      # present on the document check, and plain Bool failed the instance check
+      # (StartSession AccessDenied).
+      test     = "BoolIfExists"
       variable = "ssm:SessionDocumentAccessCheck"
       values   = ["true"]
     }

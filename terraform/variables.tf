@@ -166,6 +166,17 @@ variable "max_num_seqs" {
   }
 }
 
+variable "gdn_prefill_backend" {
+  description = "Kernel for Qwen3.6's Gated DeltaNet prefill. vLLM's default (FlashInfer) is JIT-compiled on first use and needs ninja and nvcc on the worker, which the image does not ship; triton is prebuilt. Switch to flashinfer only after adding ninja to the AMI."
+  type        = string
+  default     = "triton"
+
+  validation {
+    condition     = contains(["triton", "flashinfer", "auto"], var.gdn_prefill_backend)
+    error_message = "gdn_prefill_backend must be triton, flashinfer or auto."
+  }
+}
+
 variable "vllm_extra_args" {
   description = "Extra space-separated vllm serve arguments."
   type        = string

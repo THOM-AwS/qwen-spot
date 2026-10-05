@@ -53,8 +53,19 @@ missing read/list on `results/` (S3 returns AccessDenied, not 404, without list)
 uploader on an instance type not offered in eu-north-1, `tf-quiet.sh` reporting
 failures as success, and `qwenq wait` re-waking a group that had been set to 0.
 
-Next: build the GPU AMI, switch `TFVARS` to the H100 profile (`engine = "gpu"`,
-`p5.4xlarge`, the 27B model), apply, run `scripts/upload-model`, then repeat the tests.
+H100 (p5.4xlarge spot, huihui Qwen3.6 27B abliterated, 2026-10-05):
+
+| Item | Result |
+|---|---|
+| Spot capacity | eu-north-1a/b reject p5.4xlarge spot outright; 1c has a small pool (placement score 1/10). First launch took 11 min, the second 61 min. |
+| Weights | 1,199 tensors (55.6 GB) streamed from S3 in 27 s; model load 51.1 GiB in 33 to 52 s |
+| Engine | KV cache 18.8 GiB, 267k tokens, 8 concurrent 32k-token requests |
+| Startup fixes found live | `max_num_seqs` 1024 does not fit Qwen3.6's per-sequence Mamba state (350 blocks): now 64. FlashInfer JIT-compiles its GDN prefill and sampler kernels and the image has no `ninja`: GDN prefill uses triton and `VLLM_USE_FLASHINFER_SAMPLER=0`. |
+| Answers | correct; 54 tokens in 1.2 s (about 45 tok/s single stream); warm request 4 s end to end |
+| Session tunnel | blocked by a client policy bug (`Bool` instead of `BoolIfExists` on `ssm:SessionDocumentAccessCheck`), fixed |
+
+Still to do: measure a clean cold start with the fixes baked in, re-run `qwenq session`, add `ninja` to the
+image to bring back FlashInfer's kernels, and codify the 1c-only subnets.
 
 ### Manual changes
 
