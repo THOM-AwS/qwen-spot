@@ -39,6 +39,16 @@ cpu_ld_preload() {
   printf '%s:%s' "$tcmalloc" "$iomp"
 }
 
+# The compile caches (torch.compile, FlashInfer JIT) depend on the exact vLLM
+# arguments. Key the S3 object on them, so changing MTP, graph sizes or kernels
+# stores a new cache instead of restoring a stale one forever.
+CACHE_FINGERPRINT_FILE=/opt/qwen-spot/nvme/cache-fingerprint
+
+cache_object() {
+  local fingerprint=$1
+  printf '%scache-%s.tar' "$(with_slash "$QWEN_COMPILE_CACHE_S3_URI")" "$fingerprint"
+}
+
 # Normalise an S3 prefix to have exactly one trailing slash.
 with_slash() {
   printf '%s/' "${1%/}"

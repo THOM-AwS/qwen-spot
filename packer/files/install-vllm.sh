@@ -16,6 +16,10 @@ case "$ENGINE" in
     # No --torch-backend flag: the build host has no GPU, so "auto" would pick CPU torch.
     # The default PyPI torch for this vLLM pin is the CUDA 13 build.
     uv pip install --python "$VENV/bin/python" "vllm[runai]==${VLLM_VERSION}"
+    # FlashInfer JIT-compiles its GDN prefill and sampler kernels on first use and
+    # needs ninja for that (nvcc comes with the DLAMI). Without it the engine dies
+    # at startup; the kernels are then cached in S3 by cache-sync.
+    uv pip install --python "$VENV/bin/python" "ninja==${NINJA_VERSION:-1.13.2}"
     ;;
   cpu)
     : "${VLLM_CPU_WHEEL_SHA256:?}"

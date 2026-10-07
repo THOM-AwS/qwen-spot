@@ -47,6 +47,9 @@ runs `systemctl start qwen-nvme qwen-cwagent vllm qwen-worker`.
 | `QWEN_VLLM_EXTRA_ARGS` | `--language-model-only` (space separated) | vllm-start |
 | `QWEN_ENGINE` | `gpu` or `cpu` (CPU is for the cheap end-to-end test) | vllm-start |
 | `QWEN_COMPILE_CACHE_S3_URI` | `s3://<weights>/cache/vllm/<model_name>/<revision>/` or empty to disable | vllm-start, cache-sync |
+| `QWEN_MTP_TOKENS` | `2` (0 = off): MTP speculative decoding | vllm-start |
+| `QWEN_PREFETCH_VENV` | `1` (default): read the vLLM venv in parallel at start to hydrate the lazily restored root volume | vllm-start |
+| `VLLM_USE_FLASHINFER_SAMPLER` | `1` or `0`, passed straight to vLLM | vllm |
 | `QWEN_IDLE_MINUTES` | `15` | worker |
 | `QWEN_WORKER_CONCURRENCY` | `8` | worker |
 | `QWEN_VISIBILITY_TIMEOUT` | `900` | worker |
@@ -59,7 +62,7 @@ runs `systemctl start qwen-nvme qwen-cwagent vllm qwen-worker`.
 Weights bucket:
 - `models/<model_name>/<revision>/` safetensors, config, tokenizer files
 - `models/<model_name>/<revision>/.complete` written last by the uploader
-- `cache/vllm/<model_name>/<revision>/cache.tar` vLLM torch.compile cache
+- `cache/vllm/<model_name>/<revision>/cache-<fingerprint>.tar`: torch.compile and FlashInfer JIT caches, one per vLLM configuration (the fingerprint hashes the engine, model and arguments)
 
 Results bucket:
 - `results/<request_id>.json` result object (see README)

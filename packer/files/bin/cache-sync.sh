@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# After vLLM is healthy, upload its torch.compile cache once so the next cold
-# start can skip compilation. Never fails the boot.
+# After vLLM is healthy, upload its compile caches (torch.compile and FlashInfer
+# JIT kernels) once per configuration, so the next cold start skips compiling.
+# Never fails the boot.
 set -uo pipefail
 
 # shellcheck source=common.sh
@@ -13,22 +14,30 @@ fi
 
 export AWS_REGION="${QWEN_REGION:-}" AWS_DEFAULT_REGION="${QWEN_REGION:-}"
 cache_root="$NVME_ROOT/vllm-cache"
-cache_obj="$(with_slash "$QWEN_COMPILE_CACHE_S3_URI")cache.tar"
+if [ ! -s "$CACHE_FINGERPRINT_FILE" ]; then
+  log warn cache-sync "no cache fingerprint from vllm-start; skipping"
+  exit 0
+fi
+cache_obj=$(cache_object "$(cat "$CACHE_FINGERPRINT_FILE")")
 
 if s5cmd ls "$cache_obj" >/dev/null 2>&1; then
   log info cache-sync "compile cache already in S3"
   exit 0
 fi
 
-if [ ! -d "$cache_root/torch_compile_cache" ]; then
-  log info cache-sync "no torch_compile_cache to upload"
+dirs=()
+for d in torch_compile_cache flashinfer; do
+  [ -d "$cache_root/$d" ] && dirs+=("$d")
+done
+if [ "${#dirs[@]}" -eq 0 ]; then
+  log info cache-sync "no compile cache to upload"
   exit 0
 fi
 
 tmp="$NVME_ROOT/tmp/cache.tar"
 mkdir -p "$(dirname "$tmp")"
-if tar -C "$cache_root" -cf "$tmp" torch_compile_cache && s5cmd cp "$tmp" "$cache_obj"; then
-  log info cache-sync "uploaded compile cache to $cache_obj"
+if tar -C "$cache_root" -cf "$tmp" "${dirs[@]}" && s5cmd cp "$tmp" "$cache_obj"; then
+  log info cache-sync "uploaded compile cache (${dirs[*]}) to $cache_obj"
 else
   log warn cache-sync "compile cache upload failed"
 fi

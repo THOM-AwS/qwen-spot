@@ -12,7 +12,13 @@ export VLLM_CACHE_ROOT="$NVME_ROOT/vllm-cache"
 export HF_HOME="$NVME_ROOT/hf"
 export XDG_CACHE_HOME="$NVME_ROOT/cache"
 export TMPDIR="$NVME_ROOT/tmp"
-mkdir -p "$VLLM_CACHE_ROOT" "$HF_HOME" "$XDG_CACHE_HOME" "$TMPDIR"
+# FlashInfer JIT-compiles kernels (GDN prefill, sampler) into this tree; it lives
+# under VLLM_CACHE_ROOT so it is saved and restored with the compile cache.
+export FLASHINFER_WORKSPACE_BASE="$VLLM_CACHE_ROOT/flashinfer"
+if [ -d /usr/local/cuda/bin ]; then
+  export CUDA_HOME=/usr/local/cuda PATH="/usr/local/cuda/bin:$PATH"
+fi
+mkdir -p "$VLLM_CACHE_ROOT" "$HF_HOME" "$XDG_CACHE_HOME" "$TMPDIR" "$FLASHINFER_WORKSPACE_BASE"
 
 model_prefix=$(with_slash "$QWEN_MODEL_S3_URI")
 
@@ -20,20 +26,6 @@ model_prefix=$(with_slash "$QWEN_MODEL_S3_URI")
 if ! s5cmd ls "${model_prefix}.complete" >/dev/null 2>&1; then
   log error vllm-start "no .complete marker at ${model_prefix}.complete; run scripts/upload-model first"
   exit 1
-fi
-
-# Restore the torch.compile cache so warm-up skips compilation.
-if [ -n "${QWEN_COMPILE_CACHE_S3_URI:-}" ]; then
-  cache_obj="$(with_slash "$QWEN_COMPILE_CACHE_S3_URI")cache.tar"
-  if s5cmd ls "$cache_obj" >/dev/null 2>&1; then
-    if s5cmd cat "$cache_obj" | tar -x -C "$VLLM_CACHE_ROOT"; then
-      log info vllm-start "restored compile cache from $cache_obj"
-    else
-      log warn vllm-start "compile cache restore failed; vLLM will compile from scratch"
-    fi
-  else
-    log info vllm-start "no compile cache at $cache_obj yet"
-  fi
 fi
 
 args=(
@@ -68,6 +60,14 @@ esac
 case "$QWEN_ENGINE" in
   gpu)
     args+=(--gpu-memory-utilization "${QWEN_GPU_MEMORY_UTILIZATION:-0.92}")
+    # MTP speculative decoding with the model's own multi-token-prediction head.
+    mtp="${QWEN_MTP_TOKENS:-0}"
+    case "$mtp" in
+      ''|*[!0-9]*) log error vllm-start "QWEN_MTP_TOKENS must be a whole number, got $mtp"; exit 1 ;;
+    esac
+    if [ "$mtp" -gt 0 ]; then
+      args+=(--speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":${mtp}}")
+    fi
     ;;
   cpu)
     export VLLM_CPU_KVCACHE_SPACE="${QWEN_CPU_KVCACHE_GB:-4}"
@@ -85,5 +85,34 @@ if [ -n "${QWEN_VLLM_EXTRA_ARGS:-}" ]; then
   read -r -a extra <<<"$QWEN_VLLM_EXTRA_ARGS"
 fi
 
-log info vllm-start "starting vllm serve ($QWEN_ENGINE, $QWEN_WEIGHT_LOAD_MODE)"
+# Restore the compile caches for exactly this configuration.
+fingerprint=$(printf '%s\n' "$QWEN_ENGINE" "$model" "${args[@]}" "${extra[@]}" | sha256sum | cut -c1-16)
+printf '%s\n' "$fingerprint" >"$CACHE_FINGERPRINT_FILE"
+if [ -n "${QWEN_COMPILE_CACHE_S3_URI:-}" ]; then
+  cache_obj=$(cache_object "$fingerprint")
+  if s5cmd ls "$cache_obj" >/dev/null 2>&1; then
+    if s5cmd cat "$cache_obj" | tar -x -C "$VLLM_CACHE_ROOT"; then
+      log info vllm-start "restored compile cache from $cache_obj"
+    else
+      log warn vllm-start "compile cache restore failed; vLLM will compile from scratch"
+    fi
+  else
+    log info vllm-start "no compile cache at $cache_obj yet"
+  fi
+fi
+
+# The root volume is restored lazily from its snapshot, and vLLM's first import
+# of torch and the CUDA libraries reads several GB one file at a time. Reading the
+# venv in parallel in the background pulls those blocks in far faster while vLLM
+# starts. Best effort: it never delays or fails the start.
+if [ "$QWEN_ENGINE" = gpu ] && [ "${QWEN_PREFETCH_VENV:-1}" = 1 ]; then
+  (
+    start=$(date +%s)
+    find "$VLLM_VENV" -type f \( -name '*.so*' -o -name '*.py' -o -name '*.pyc' \) -print0 \
+      | xargs -0 -P 64 -n 32 cat >/dev/null 2>&1
+    log info vllm-start "prefetched the vLLM venv in $(($(date +%s) - start))s"
+  ) &
+fi
+
+log info vllm-start "starting vllm serve ($QWEN_ENGINE, $QWEN_WEIGHT_LOAD_MODE, cache key $fingerprint)"
 exec "$VLLM_VENV/bin/vllm" serve "$model" "${args[@]}" "${extra[@]}"

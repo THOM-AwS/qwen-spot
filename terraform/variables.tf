@@ -173,13 +173,41 @@ variable "max_num_seqs" {
 }
 
 variable "gdn_prefill_backend" {
-  description = "Kernel for Qwen3.6's Gated DeltaNet prefill. vLLM's default (FlashInfer) is JIT-compiled on first use and needs ninja and nvcc on the worker, which the image does not ship; triton is prebuilt. Switch to flashinfer only after adding ninja to the AMI."
+  description = "Kernel for Qwen3.6's Gated DeltaNet prefill: flashinfer (fastest; JIT-compiled once, then cached in S3), triton (prebuilt fallback) or cutedsl."
   type        = string
-  default     = "triton"
+  default     = "flashinfer"
 
   validation {
-    condition     = contains(["triton", "flashinfer", "auto"], var.gdn_prefill_backend)
-    error_message = "gdn_prefill_backend must be triton, flashinfer or auto."
+    condition     = contains(["flashinfer", "triton", "cutedsl"], var.gdn_prefill_backend)
+    error_message = "gdn_prefill_backend must be flashinfer, triton or cutedsl (vLLM 0.30 has no auto)."
+  }
+}
+
+variable "flashinfer_sampler" {
+  description = "Use FlashInfer's top-k/top-p sampler (JIT-compiled once, cached). false falls back to vLLM's PyTorch sampler."
+  type        = bool
+  default     = true
+}
+
+variable "mtp_speculative_tokens" {
+  description = "MTP speculative decoding with the model's own multi-token-prediction head; 0 turns it off. Published single-user gains for Qwen3.5/3.6 are about 1.3x to 1.9x, best around 2 to 3 tokens, with little or no gain on short answers."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.mtp_speculative_tokens >= 0 && var.mtp_speculative_tokens <= 5 && floor(var.mtp_speculative_tokens) == var.mtp_speculative_tokens
+    error_message = "mtp_speculative_tokens must be a whole number from 0 to 5."
+  }
+}
+
+variable "max_cudagraph_capture_size" {
+  description = "Largest batch vLLM captures a CUDA graph for. vLLM's default (up to 512) wastes startup time for a single user; 48 covers 16 concurrent requests at 3 tokens each with MTP 2. Larger batches still run, without a graph."
+  type        = number
+  default     = 48
+
+  validation {
+    condition     = var.max_cudagraph_capture_size >= 1 && var.max_cudagraph_capture_size <= 512 && floor(var.max_cudagraph_capture_size) == var.max_cudagraph_capture_size
+    error_message = "max_cudagraph_capture_size must be a whole number from 1 to 512."
   }
 }
 
