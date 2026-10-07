@@ -283,6 +283,17 @@ print(result["via"], result["output"])
   lazily. vLLM's first import of torch and CUDA libraries (several GB) reads
   blocks from S3 on demand, and that can add minutes to every cold start.
 
+## Future options (parked)
+
+- **Second instance type for spot scarcity.** An L40S `g6e.4xlarge` (48 GB) running the model in
+  FP8 (about 28 GB of weights) at roughly 0.90 USD/hr, as another override in the worker group with
+  its own launch template. Decode would be roughly 3 to 4 times slower than the H100. It needs a
+  G-family spot quota increase in the region (0 today; 16 vCPUs for g6e.4xlarge). Model options, in
+  order of preference: vLLM online `fp8_per_block` quantization of the same huihui bf16 weights (test
+  output quality first); `edp1096/Huihui-Qwen3.6-27B-abliterated-FP8` (provenance unverified);
+  `kasimat/Qwen3.6-27B-AEON-Ultimate-Uncensored-FP8-MTP` (a different abliterated fine-tune).
+  Revisit if p5.4xlarge spot waits get long or its price nears `spot_max_price`.
+
 ## Known limitations
 
 - **The alarm backstop is slow.** SQS metrics resume up to 15 minutes after an
