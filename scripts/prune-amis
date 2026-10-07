@@ -7,8 +7,8 @@
 # ///
 """Deregister superseded qwen-spot AMIs and delete their snapshots.
 
-Keeps, per Engine tag (gpu, cpu), the newest image plus any image a qwen-spot
-launch template version still references. Run after every Packer build.
+Keeps, per Engine tag (gpu, cpu), the newest image plus any image the default or
+latest version of a qwen-spot launch template uses. Run after every Packer build.
 Dry run by default; --yes deletes. Needs AWS_PROFILE set explicitly.
 """
 
@@ -25,18 +25,20 @@ from _common import require_profile
 
 
 def referenced_images(ec2) -> set[str]:
-    """Images used by any version of a qwen-spot launch template."""
+    """Images the default or latest version of a qwen-spot launch template uses.
+
+    Older versions are history: they would pin every past image forever.
+    """
     used: set[str] = set()
     templates = ec2.describe_launch_templates(Filters=[{"Name": "tag:Project", "Values": ["qwen-spot"]}])
     for template in templates["LaunchTemplates"]:
-        pages = ec2.get_paginator("describe_launch_template_versions").paginate(
-            LaunchTemplateId=template["LaunchTemplateId"]
-        )
-        for page in pages:
-            for version in page["LaunchTemplateVersions"]:
-                image = version.get("LaunchTemplateData", {}).get("ImageId")
-                if image:
-                    used.add(image)
+        versions = ec2.describe_launch_template_versions(
+            LaunchTemplateId=template["LaunchTemplateId"], Versions=["$Default", "$Latest"]
+        )["LaunchTemplateVersions"]
+        for version in versions:
+            image = version.get("LaunchTemplateData", {}).get("ImageId")
+            if image:
+                used.add(image)
     return used
 
 
