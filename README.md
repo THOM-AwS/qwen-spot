@@ -65,6 +65,8 @@ H100 (p5.4xlarge spot, huihui Qwen3.6 27B abliterated, 2026-10-05):
 | Clean cold start (all fixes baked in, capacity on the first try) | 7 min 36 s submit to answer: launch 18 s, boot plus model stream, load and compile the rest |
 | Streaming over `qwenq session` | first token 0.39 s; 4 lines in 1.0 s |
 | Shell session as the client role | refused (only port forwarding is allowed) |
+| MTP speculative decoding (2 tokens) | 894 tokens in 10.1 s = 88 tok/s, against about 45 without MTP |
+| Boot to serving, first boot of a config (torch.compile and FlashInfer kernels built) | 6 min 41 s; the caches then upload to S3 for the next boot |
 | Session policy | the first attempt was denied by `Bool` on `ssm:SessionDocumentAccessCheck`; `BoolIfExists` fixed it |
 
 Still to do:

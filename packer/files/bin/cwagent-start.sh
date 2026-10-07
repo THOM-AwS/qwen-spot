@@ -19,13 +19,13 @@ collect() {
   }'
 }
 
-jq -n \
-  --argjson vllm "$(collect vllm)" \
-  --argjson worker "$(collect worker)" \
-  --argjson cache "$(collect cache-sync)" \
-  '{
+# One stream per unit log. Every unit that writes to /var/log/qwen-spot must be
+# listed here, or its log never leaves the instance (boot-watchdog was missed).
+streams=(vllm worker cache-sync boot-watchdog nvme)
+list=$(for name in "${streams[@]}"; do collect "$name"; done | jq -s .)
+jq -n --argjson list "$list" '{
     agent: {run_as_user: "root"},
-    logs: {logs_collected: {files: {collect_list: [$vllm, $worker, $cache]}}}
+    logs: {logs_collected: {files: {collect_list: $list}}}
   }' >"$conf"
 
 /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
