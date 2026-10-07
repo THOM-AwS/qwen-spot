@@ -242,6 +242,28 @@ variable "idle_minutes" {
   }
 }
 
+variable "boot_timeout_minutes" {
+  description = "On-instance boot watchdog: if vLLM is not healthy this long after boot, the instance reports QwenSpot/BootFailed and sets the group to 0, so a bad image or config cannot crash-loop on a billed GPU. A cold start with kernel compiles takes about 10 to 15 minutes."
+  type        = number
+  default     = 20
+
+  validation {
+    condition     = var.boot_timeout_minutes >= 10 && var.boot_timeout_minutes < var.stalled_minutes
+    error_message = "boot_timeout_minutes must be at least 10 and less than stalled_minutes (the watchdog acts first; the alarm is the backstop)."
+  }
+}
+
+variable "stalled_minutes" {
+  description = "Stop a worker that has been in service this long with requests waiting and none taken (vLLM never became healthy). Must cover a first-boot cold start plus kernel compiles, about 10 to 15 minutes."
+  type        = number
+  default     = 25
+
+  validation {
+    condition     = var.stalled_minutes >= 15 && var.stalled_minutes <= 60
+    error_message = "stalled_minutes must be 15 to 60."
+  }
+}
+
 variable "idle_backstop_minutes" {
   description = "If an instance is in service with an empty queue for this long, an alarm sets capacity to 0 and emails. Backstop for the worker's own idle scale-in, so it must leave the worker time to act."
   type        = number

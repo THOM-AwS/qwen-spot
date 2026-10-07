@@ -15,6 +15,9 @@ export TMPDIR="$NVME_ROOT/tmp"
 # FlashInfer JIT-compiles kernels (GDN prefill, sampler) into this tree; it lives
 # under VLLM_CACHE_ROOT so it is saved and restored with the compile cache.
 export FLASHINFER_WORKSPACE_BASE="$VLLM_CACHE_ROOT/flashinfer"
+# vLLM is started by path, not from an activated venv, so the venv's bin (ninja,
+# which FlashInfer runs to JIT-compile kernels) must be on PATH explicitly.
+export PATH="$VLLM_VENV/bin:$PATH"
 if [ -d /usr/local/cuda/bin ]; then
   export CUDA_HOME=/usr/local/cuda PATH="/usr/local/cuda/bin:$PATH"
 fi

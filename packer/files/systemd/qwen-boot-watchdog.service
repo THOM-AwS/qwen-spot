@@ -1,0 +1,17 @@
+[Unit]
+Description=qwen-spot: fail the boot and scale in if vLLM is never healthy
+ConditionPathExists=/etc/qwen-spot/config.env
+After=network-online.target vllm.service
+
+[Service]
+Type=oneshot
+User=qwen
+Group=qwen
+EnvironmentFile=/etc/qwen-spot/config.env
+ExecStart=/opt/qwen-spot/bin/boot-watchdog.sh
+TimeoutStartSec=infinity
+StandardOutput=append:/var/log/qwen-spot/boot-watchdog.log
+StandardError=inherit
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes

@@ -23,6 +23,7 @@ all three.
 | `qwen-cwagent.service` | oneshot | after config | renders CloudWatch agent config with `QWEN_LOG_GROUP`, starts agent |
 | `vllm.service` | simple | after qwen-nvme | `ExecStart=/opt/qwen-spot/bin/vllm-start.sh`, `Restart=on-failure` |
 | `qwen-worker.service` | simple | after vllm | `ExecStartPre=/opt/qwen-spot/bin/wait-vllm-health.sh`, `Restart=always` |
+| `qwen-boot-watchdog.service` | oneshot | wanted by qwen-worker | fails the boot and sets capacity 0 if vLLM is not healthy within `QWEN_BOOT_TIMEOUT_MINUTES` |
 | `qwen-cache-sync.service` | oneshot | after vllm healthy | uploads vLLM compile cache once if absent in S3 |
 
 All units have `ConditionPathExists=/etc/qwen-spot/config.env`, so a bare AMI
@@ -50,6 +51,7 @@ runs `systemctl start qwen-nvme qwen-cwagent vllm qwen-worker`.
 | `QWEN_MTP_TOKENS` | `2` (0 = off): MTP speculative decoding | vllm-start |
 | `QWEN_PREFETCH_VENV` | `1` (default): read the vLLM venv in parallel at start to hydrate the lazily restored root volume | vllm-start |
 | `VLLM_USE_FLASHINFER_SAMPLER` | `1` or `0`, passed straight to vLLM | vllm |
+| `QWEN_BOOT_TIMEOUT_MINUTES` | `20`: boot watchdog gives up and scales the group to 0 | boot-watchdog |
 | `QWEN_IDLE_MINUTES` | `15` | worker |
 | `QWEN_WORKER_CONCURRENCY` | `8` | worker |
 | `QWEN_VISIBILITY_TIMEOUT` | `900` | worker |

@@ -54,3 +54,7 @@ variable "sleep_policy_arn" {
 variable "idle_backstop_minutes" {
   type = number
 }
+
+variable "stalled_minutes" {
+  type = number
+}

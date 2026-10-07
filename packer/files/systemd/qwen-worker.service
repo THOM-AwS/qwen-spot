@@ -2,7 +2,7 @@
 Description=qwen-spot: SQS worker
 ConditionPathExists=/etc/qwen-spot/config.env
 After=network-online.target vllm.service
-Wants=network-online.target vllm.service qwen-cache-sync.service
+Wants=network-online.target vllm.service qwen-cache-sync.service qwen-boot-watchdog.service
 
 [Service]
 Type=simple

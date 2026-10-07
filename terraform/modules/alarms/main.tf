@@ -59,25 +59,28 @@ resource "aws_cloudwatch_metric_alarm" "scale_out" {
 }
 
 # A worker that is up while requests wait and none is taken (vLLM never became
-# healthy, the worker crashed). Nothing in flight, so a busy healthy worker is
-# never stopped; in service, so a group that simply has no spot capacity is left
-# to the stuck_queue email. Sets capacity to 0 and emails.
+# healthy, the worker crashed). It counts minutes the instance has been in
+# service with work waiting and nothing in flight, not the age of the request:
+# a long wait for spot capacity must not count against a box that just booted.
+# stalled_minutes covers a first-boot cold start plus kernel compiles. A busy,
+# healthy worker always has work in flight and is never stopped. Sets capacity
+# to 0 and emails.
 resource "aws_cloudwatch_metric_alarm" "stalled" {
   count = var.worker_group_enabled ? 1 : 0
 
   alarm_name          = "${var.name_prefix}-stalled"
-  alarm_description   = "Worker in service, requests waiting over ${var.stuck_queue_seconds / 60} min and none in flight: capacity set to 0. Check the vllm and worker logs."
+  alarm_description   = "Worker in service for ${var.stalled_minutes} min with requests waiting and none in flight: capacity set to 0. Check the vllm and worker logs."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   threshold           = 1
-  evaluation_periods  = 5
-  datapoints_to_alarm = 5
+  evaluation_periods  = var.stalled_minutes
+  datapoints_to_alarm = var.stalled_minutes
   treat_missing_data  = "notBreaching"
   alarm_actions       = [var.sleep_policy_arn, aws_sns_topic.alerts.arn]
 
   metric_query {
     id          = "stalled"
-    expression  = "IF(FILL(inservice, 0) >= 1 AND FILL(age, 0) >= ${var.stuck_queue_seconds} AND FILL(inflight, 0) == 0, 1, 0)"
-    label       = "In service, stuck queue, nothing in flight"
+    expression  = "IF(FILL(inservice, 0) >= 1 AND FILL(visible, 0) >= 1 AND FILL(inflight, 0) == 0, 1, 0)"
+    label       = "In service, work waiting, nothing in flight"
     return_data = true
   }
 
@@ -93,10 +96,10 @@ resource "aws_cloudwatch_metric_alarm" "stalled" {
   }
 
   metric_query {
-    id = "age"
+    id = "visible"
     metric {
       namespace   = "AWS/SQS"
-      metric_name = "ApproximateAgeOfOldestMessage"
+      metric_name = "ApproximateNumberOfMessagesVisible"
       dimensions  = { QueueName = var.queue_name }
       stat        = "Maximum"
       period      = 60
@@ -267,4 +270,22 @@ resource "aws_cloudwatch_metric_alarm" "idle_backstop" {
       period      = 60
     }
   }
+}
+
+# The instance's boot watchdog publishes this when vLLM never became healthy and
+# it has already set the group to 0. This is the notification; the scale-in
+# already happened on the box.
+resource "aws_cloudwatch_metric_alarm" "boot_failed" {
+  alarm_name          = "${var.name_prefix}-boot-failed"
+  alarm_description   = "A worker failed to boot (vLLM never became healthy) and scaled the group to 0. Check the vllm and boot-watchdog logs in /qwen-spot/worker."
+  namespace           = "QwenSpot"
+  metric_name         = "BootFailed"
+  dimensions          = { AutoScalingGroupName = var.asg_name }
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
 }

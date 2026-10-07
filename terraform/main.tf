@@ -153,6 +153,7 @@ module "compute" {
     # cache-sync saves the kernels). Set flashinfer_sampler = false to fall back.
     VLLM_USE_FLASHINFER_SAMPLER = var.flashinfer_sampler ? "1" : "0"
     QWEN_MTP_TOKENS             = tostring(var.mtp_speculative_tokens)
+    QWEN_BOOT_TIMEOUT_MINUTES   = tostring(var.boot_timeout_minutes)
     QWEN_ENGINE                 = var.engine
     QWEN_COMPILE_CACHE_S3_URI   = local.compile_cache_s3_uri
     QWEN_IDLE_MINUTES           = tostring(var.idle_minutes)
@@ -189,6 +190,7 @@ module "alarms" {
   worker_group_enabled  = module.compute.worker_group_enabled
   sleep_policy_arn      = module.compute.sleep_policy_arn
   idle_backstop_minutes = var.idle_backstop_minutes
+  stalled_minutes       = var.stalled_minutes
   max_uptime_hours      = var.max_uptime_hours
   monthly_budget_usd    = var.monthly_budget_usd
 }
