@@ -2,10 +2,11 @@ name: terraform
 
 # plan: every push to any branch (and on demand), read-only role, no approval.
 #   It never writes state (-lock=false) and prints only resource addresses.
-# apply: on demand from main only. The plan job runs first and writes its
-#   summary; the apply job then waits for the required reviewer on the "aws"
-#   environment, re-plans with the write role, and refuses to continue unless
-#   its summary hash equals the plan's, so it never applies something unseen.
+# apply: on demand from main only (a deliberate workflow_dispatch, which needs
+#   write access). The plan job runs first and writes its summary; the apply job
+#   runs in the "aws" environment (main only; a required reviewer there is
+#   optional), re-plans with the write role, and refuses to continue unless its
+#   summary hash equals the plan's, so it never applies something unplanned.
 on:
   push:
     paths:

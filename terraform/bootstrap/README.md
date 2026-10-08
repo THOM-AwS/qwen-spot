@@ -33,9 +33,9 @@ terraform output -raw role_arn
 
 Then in GitHub, repo Settings > Environments > `aws`:
 
-1. Add a **required reviewer**. Only the apply job waits for approval. Plan runs on
-   every push. Approve apply only after reading the plan job's
-   summary: apply re-plans and stops if the summary differs.
+1. **Required reviewer: optional.** An apply already needs a deliberate workflow
+   run on `main`, and it re-plans and stops if the summary differs from the plan
+   job's. Add a reviewer only if you want a second click before every apply.
 2. **Deployment branches: `main` only.** The OIDC trust pins the environment,
    not the branch, so this setting is what stops a dispatched feature branch
    from assuming the role. The workflow also checks `github.ref`.
@@ -79,5 +79,5 @@ Remaining risk: inside `region`, CI can still create EC2 resources and launch
 instances with `qwen-spot-*` roles, and it can create a new `qwen-spot-*` role with
 any trust policy (IAM has no condition key on trust content). Both are capped by
 the boundary to qwen-spot resources, so a bad change can reach this project's data
-but nothing else in the account. The required-reviewer gate on
-the `aws` environment is the control for that.
+but nothing else in the account. The controls for that are who can push to and
+dispatch from `main`, and, optionally, a required reviewer on the `aws` environment.
